@@ -4,6 +4,35 @@
 
 Local-first DaVinci Resolve integration for LTX HDR IC-LoRA.
 
+## Windows Install
+
+For Windows users, the install path is:
+
+```text
+1. Download or clone this repository.
+2. Double-click Install-Windows.cmd.
+3. Fill in the local LTX/model paths when Notepad opens.
+4. Restart DaVinci Resolve.
+```
+
+The installer file is at the repository root:
+
+```text
+Install-Windows.cmd
+```
+
+It installs the Resolve menu script, creates `%USERPROFILE%\.ltx-hdr-resolve\config.json` if needed, opens that config for editing, and runs a diagnostic after the paths are filled in.
+
+After restarting Resolve, run:
+
+```text
+Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
+```
+
+The installer does not bundle LTX or the model weights. Those stay local on your workstation because the HDR model files are large and GPU-specific. See [Windows workstation setup](docs/windows-setup.md) for the LTX/Python/model preparation steps.
+
+## What This Does
+
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
 
 - Resolve script: runs inside DaVinci Resolve, finds the current timeline clip, calls the worker, imports the generated EXR sequence, and adds it as a take.
@@ -26,9 +55,7 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
   - `ltx-2.3-22b-ic-lora-hdr-0.9.safetensors`
   - `ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors`
 
-## Install
-
-For Windows, use the dedicated guide: [docs/windows-setup.md](docs/windows-setup.md).
+## macOS / Manual Install
 
 1. Copy the config template:
 
@@ -75,28 +102,6 @@ For Windows, use the dedicated guide: [docs/windows-setup.md](docs/windows-setup
 - Writes job manifests and logs under the configured output directory.
 - Does not download models automatically.
 - Does not change project color-management settings automatically yet.
-
-## Windows quick start
-
-Double-click:
-
-```text
-Install-Windows.cmd
-```
-
-The one-click installer copies the Resolve menu script, creates `~\.ltx-hdr-resolve\config.json` if needed, opens it for editing, and runs the diagnostic when the paths are filled in.
-
-Manual equivalent:
-
-```powershell
-git clone https://github.com/jeffamerican/ltx-hdr-resolve.git
-cd ltx-hdr-resolve
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ltx-hdr-resolve"
-Copy-Item .\config\config.example.windows.json "$env:USERPROFILE\.ltx-hdr-resolve\config.json"
-notepad "$env:USERPROFILE\.ltx-hdr-resolve\config.json"
-.\scripts\diagnose_local_runtime.ps1
-.\scripts\install_resolve_script.ps1
-```
 
 ## Recommended Resolve color settings
 
