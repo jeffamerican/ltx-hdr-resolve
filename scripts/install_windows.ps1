@@ -6,6 +6,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$HfBaseModelUrl = "https://huggingface.co/Lightricks/LTX-2.3"
+$HfHdrModelUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR"
+$HfTokenUrl = "https://huggingface.co/settings/tokens/new?tokenType=read"
+
 function Write-Step {
   param([string]$Message)
   Write-Host ""
@@ -44,6 +48,61 @@ function Find-PythonCommand {
   return @()
 }
 
+function Find-UvCommand {
+  $uv = Get-Command uv -ErrorAction SilentlyContinue
+  if ($uv) {
+    return $uv.Source
+  }
+
+  $candidates = @(
+    (Join-Path $env:USERPROFILE ".local\bin\uv.exe"),
+    (Join-Path $env:USERPROFILE ".cargo\bin\uv.exe")
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-Path $candidate) {
+      return $candidate
+    }
+  }
+
+  return ""
+}
+
+function Invoke-Step {
+  param(
+    [string]$Description,
+    [scriptblock]$Action
+  )
+
+  Write-Step $Description
+  & $Action
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Description failed with exit code $LASTEXITCODE"
+  }
+}
+
+function Ensure-Uv {
+  $uv = Find-UvCommand
+  if (-not [string]::IsNullOrWhiteSpace($uv)) {
+    Write-Ok "uv found: $uv"
+    return $uv
+  }
+
+  Write-Step "Installing uv"
+  $installer = Join-Path $env:TEMP "uv-installer.ps1"
+  Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -OutFile $installer
+  powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+  if ($LASTEXITCODE -ne 0) {
+    throw "uv installer failed with exit code $LASTEXITCODE"
+  }
+
+  $uv = Find-UvCommand
+  if ([string]::IsNullOrWhiteSpace($uv)) {
+    throw "uv installed, but uv.exe was not found."
+  }
+  Write-Ok "uv installed: $uv"
+  return $uv
+}
+
 function Write-LtxConfig {
   param(
     [string]$Path,
@@ -53,6 +112,129 @@ function Write-LtxConfig {
   $json = $Config | ConvertTo-Json -Depth 5
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+function Ensure-LtxCheckout {
+  param(
+    [string]$LtxRepo
+  )
+
+  $ltxScript = Join-Path $LtxRepo "run_hdr_ic_lora.py"
+  if (Test-Path $ltxScript) {
+    Write-Ok "LTX checkout found: $LtxRepo"
+    return
+  }
+
+  if ((Test-Path $LtxRepo) -and ((Get-ChildItem -Force -Path $LtxRepo | Select-Object -First 1) -ne $null)) {
+    throw "LTX-Video folder exists but is not a usable checkout: $LtxRepo"
+  }
+
+  Write-Step "Downloading LTX-Video"
+  $zipPath = Join-Path $env:TEMP "LTX-Video-main.zip"
+  $extractRoot = Join-Path $env:TEMP ("LTX-Video-" + [guid]::NewGuid().ToString("N"))
+  Invoke-WebRequest -Uri "https://github.com/Lightricks/LTX-Video/archive/refs/heads/main.zip" -OutFile $zipPath
+  Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
+  $downloadedRoot = Join-Path $extractRoot "LTX-Video-main"
+  if (-not (Test-Path (Join-Path $downloadedRoot "run_hdr_ic_lora.py"))) {
+    throw "Downloaded LTX-Video archive did not contain run_hdr_ic_lora.py"
+  }
+
+  if (Test-Path $LtxRepo) {
+    Remove-Item -Path $LtxRepo -Force
+  }
+  Move-Item -Path $downloadedRoot -Destination $LtxRepo
+  Write-Ok "LTX-Video downloaded to: $LtxRepo"
+}
+
+function Ensure-LtxPythonEnvironment {
+  param(
+    [string]$Uv,
+    [string]$LtxRepo,
+    [string]$LtxPython
+  )
+
+  if (-not (Test-Path $LtxPython)) {
+    Invoke-Step "Creating LTX Python 3.11 environment" {
+      & $Uv venv --python 3.11 (Join-Path $LtxRepo ".venv")
+    }
+  } else {
+    Write-Ok "LTX Python environment found: $LtxPython"
+  }
+
+  Invoke-Step "Installing LTX Python packages" {
+    & $Uv pip install --python $LtxPython -e (Join-Path $LtxRepo "packages\ltx-core") -e (Join-Path $LtxRepo "packages\ltx-pipelines") -e (Join-Path $LtxRepo "packages\ltx-trainer") huggingface_hub hf_xet
+  }
+}
+
+function Get-PlainTextFromSecureString {
+  param([securestring]$SecureString)
+
+  if ($null -eq $SecureString -or $SecureString.Length -eq 0) {
+    return ""
+  }
+
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  }
+}
+
+function Get-HuggingFaceToken {
+  if (-not [string]::IsNullOrWhiteSpace($env:HF_TOKEN)) {
+    Write-Ok "Using Hugging Face token from HF_TOKEN environment variable"
+    return $env:HF_TOKEN
+  }
+
+  Write-Warn "The LTX Hugging Face model repositories are gated."
+  Write-Host ""
+  Write-Host "Before downloads can start, your Hugging Face account must have access to:"
+  Write-Host "  1. $HfBaseModelUrl"
+  Write-Host "  2. $HfHdrModelUrl"
+  Write-Host ""
+  Write-Host "Then create a read token here:"
+  Write-Host "  $HfTokenUrl"
+  Write-Host ""
+  $openAnswer = Read-Host "Open these Hugging Face pages now? [Y/n]"
+  if ([string]::IsNullOrWhiteSpace($openAnswer) -or $openAnswer.ToLowerInvariant().StartsWith("y")) {
+    Start-Process $HfBaseModelUrl
+    Start-Process $HfHdrModelUrl
+    Start-Process $HfTokenUrl
+    Write-Host ""
+    Write-Host "Accept the model terms in the browser, create/copy a read token, then return here."
+  }
+
+  Write-Host ""
+  Write-Host "Paste the Hugging Face read token. Input is hidden."
+  $secureToken = Read-Host "Hugging Face token" -AsSecureString
+  $token = Get-PlainTextFromSecureString $secureToken
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    throw "A Hugging Face token is required to download the gated LTX model files."
+  }
+  return $token
+}
+
+function Ensure-Models {
+  param(
+    [string]$LtxPython,
+    [string]$ModelDir,
+    [string]$RepoRoot
+  )
+
+  $missingBefore = Get-MissingRuntimeInputs "" "" $ModelDir | Where-Object { $_.StartsWith("Model file:") }
+  if ($missingBefore.Count -eq 0) {
+    Write-Ok "All model files found in: $ModelDir"
+    return
+  }
+
+  Write-Step "Downloading LTX model files"
+  $token = Get-HuggingFaceToken
+
+  & $LtxPython (Join-Path $RepoRoot "src\download_models.py") --output-dir $ModelDir --token $token
+  if ($LASTEXITCODE -ne 0) {
+    throw "Model download failed. Confirm access is accepted for $HfBaseModelUrl and $HfHdrModelUrl, then rerun the installer."
+  }
 }
 
 function Read-PathDefault {
@@ -78,16 +260,18 @@ function Get-MissingRuntimeInputs {
   )
 
   $missing = @()
-  if (-not (Test-Path $LtxRepo)) {
+  if (-not [string]::IsNullOrWhiteSpace($LtxRepo) -and -not (Test-Path $LtxRepo)) {
     $missing += "LTX checkout folder: $LtxRepo"
   }
-  if (-not (Test-Path $LtxPython)) {
+  if (-not [string]::IsNullOrWhiteSpace($LtxPython) -and -not (Test-Path $LtxPython)) {
     $missing += "LTX Python executable: $LtxPython"
   }
 
-  $ltxScript = Join-Path $LtxRepo "run_hdr_ic_lora.py"
-  if (-not (Test-Path $ltxScript)) {
-    $missing += "LTX HDR script: $ltxScript"
+  if (-not [string]::IsNullOrWhiteSpace($LtxRepo)) {
+    $ltxScript = Join-Path $LtxRepo "run_hdr_ic_lora.py"
+    if (-not (Test-Path $ltxScript)) {
+      $missing += "LTX HDR script: $ltxScript"
+    }
   }
 
   $modelFiles = @(
@@ -147,6 +331,11 @@ try {
   New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
   Write-Ok "Using LTX Python executable: $ltxPython"
 
+  $uv = Ensure-Uv
+  Ensure-LtxCheckout $ltxRepo
+  Ensure-LtxPythonEnvironment $uv $ltxRepo $ltxPython
+  Ensure-Models $ltxPython $modelDir $RepoRoot
+
   $config = [ordered]@{
     ltx_repo_path = $ltxRepo
     ltx_python = $ltxPython
@@ -171,18 +360,12 @@ try {
   Write-Step "Checking local runtime"
   $missingInputs = Get-MissingRuntimeInputs $ltxRepo $ltxPython $modelDir
   if ($missingInputs.Count -gt 0) {
-    Write-Warn "Local LTX runtime is not ready yet. The Resolve script is installed and config.json was written."
+    Write-Warn "Local LTX runtime is not ready yet."
     Write-Host ""
     Write-Host "Missing files/folders:"
     foreach ($missingInput in $missingInputs) {
       Write-Host "  - $missingInput"
     }
-    Write-Host ""
-    Write-Host "Next steps for the default install:"
-    Write-Host "  1. Clone LTX into: $ltxRepo"
-    Write-Host "  2. Create the LTX Python 3.11 venv inside that folder."
-    Write-Host "  3. Put the four .safetensors files in: $modelDir"
-    Write-Host "  4. Run Install-Windows.cmd again."
   } else {
     $pythonCommand = Find-PythonCommand
     if ($pythonCommand.Count -eq 0) {

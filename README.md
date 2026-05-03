@@ -37,9 +37,13 @@ After restarting Resolve, run:
 Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
 ```
 
-The installer does not bundle LTX or the model weights. Those stay local on your workstation because the HDR model files are large and GPU-specific. See [Windows workstation setup](docs/windows-setup.md) for the LTX/Python/model preparation steps.
+The installer downloads LTX, creates the local Python environment, and downloads the model files. Because the LTX model files are gated on Hugging Face, it will open the required Hugging Face pages and ask for a read token when model downloads are needed.
 
-For the default install, clone LTX into `LTX-Video` and put the four `.safetensors` files in `models`.
+Required Hugging Face pages:
+
+- [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
+- [LTX HDR IC-LoRA model](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
 
 Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose different folders.
 

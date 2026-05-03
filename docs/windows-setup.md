@@ -4,17 +4,15 @@ This plugin is designed to run the LTX HDR conversion locally on the Windows wor
 
 ## 1. Prepare LTX locally
 
-Install Python 3.11, Git, and `uv`, then clone LTX:
+Double-click `Install-Windows.cmd`. It installs `uv` if needed, downloads LTX, creates the Python 3.11 environment, installs LTX packages, and downloads the model files.
 
-```powershell
-git clone https://github.com/Lightricks/LTX-Video.git .\LTX-Video
-cd .\LTX-Video
-uv venv --python 3.11
-.\.venv\Scripts\Activate.ps1
-uv pip install -e packages/ltx-core -e packages/ltx-pipelines -e packages/ltx-trainer
-```
+The only account step is Hugging Face model access. The installer opens these pages when needed:
 
-Download the four model files listed in [local-ltx-setup.md](local-ltx-setup.md) into `.\models` inside this repository.
+- [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
+- [LTX HDR IC-LoRA model](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
+
+Accept the model access terms in the browser, create a read token, then paste it into the installer. Input is hidden.
 
 ## 2. Configure the plugin
 
@@ -24,7 +22,7 @@ The easy path is to double-click this file from the repository root:
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, writes the config file, and uses folders next to `Install-Windows.cmd`.
+It installs the Resolve menu script, writes the config file, bootstraps the local runtime, downloads models, and uses folders next to `Install-Windows.cmd`.
 
 The default folders are:
 
