@@ -1,5 +1,7 @@
 # LTX HDR Resolve v1
 
+![LTX HDR Resolve](assets/readme/hero.png)
+
 Local-first DaVinci Resolve integration for LTX HDR IC-LoRA.
 
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
