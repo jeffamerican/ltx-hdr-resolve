@@ -9,7 +9,7 @@ from pathlib import Path
 MODEL_FILES = (
     (
         "Lightricks/LTX-2.3",
-        "ltx-2.3-22b-distilled.safetensors",
+        "ltx-2.3-22b-distilled-1.1.safetensors",
     ),
     (
         "Lightricks/LTX-2.3",

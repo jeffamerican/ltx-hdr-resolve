@@ -27,7 +27,7 @@ class WorkerTests(unittest.TestCase):
             "ltx_python": str(ltx_python),
             "ltx_hdr_script": "run_hdr_ic_lora.py",
             "output_root": str(root / "output"),
-            "distilled_checkpoint": str(models / "ltx-2.3-22b-distilled.safetensors"),
+            "distilled_checkpoint": str(models / "ltx-2.3-22b-distilled-1.1.safetensors"),
             "upscaler": str(models / "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"),
             "lora": str(models / "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors"),
             "text_embeddings": str(models / "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"),

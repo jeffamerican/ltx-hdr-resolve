@@ -1,9 +1,9 @@
 {
   "ltx_repo_path": "/absolute/path/to/LTX-Video",
   "ltx_python": "/absolute/path/to/LTX-Video/.venv/bin/python",
-  "ltx_hdr_script": "run_hdr_ic_lora.py",
+  "ltx_hdr_script": "packages/ltx-pipelines/src/ltx_pipelines/hdr_ic_lora.py",
   "output_root": "/absolute/path/to/LTX_HDR_Output",
-  "distilled_checkpoint": "/absolute/path/to/models/ltx-2.3-22b-distilled.safetensors",
+  "distilled_checkpoint": "/absolute/path/to/models/ltx-2.3-22b-distilled-1.1.safetensors",
   "upscaler": "/absolute/path/to/models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
   "lora": "/absolute/path/to/models/ltx-2.3-22b-ic-lora-hdr-0.9.safetensors",
   "text_embeddings": "/absolute/path/to/models/ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors",

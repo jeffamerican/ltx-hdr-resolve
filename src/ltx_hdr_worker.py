@@ -80,9 +80,17 @@ def validate_config(config):
 
 
 def build_ltx_command(config, input_path, output_dir):
+    script_path = resolve_script_path(config)
+    if script_path.name == "hdr_ic_lora.py":
+        raise RuntimeError(
+            "The current LTX-2 repository exposes HDR as a Python pipeline, not the old "
+            "run_hdr_ic_lora.py command-line script. The local runtime is installed, but "
+            "conversion needs the plugin wrapper implementation."
+        )
+
     command = [
         config["ltx_python"],
-        str(resolve_script_path(config)),
+        str(script_path),
         "--input",
         str(input_path),
         "--output-dir",

@@ -26,7 +26,7 @@ By default, it keeps everything inside the cloned `ltx-hdr-resolve` folder:
 
 ```text
 ltx-hdr-resolve\
-  LTX-Video\   # local LTX checkout
+  LTX-Video\   # local LTX-2 checkout
   models\      # downloaded .safetensors model files
   output\      # generated jobs, logs, previews, EXR frames
 ```
@@ -52,7 +52,7 @@ Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose di
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
 
 - Resolve script: runs inside DaVinci Resolve, finds the current timeline clip, calls the worker, imports the generated EXR sequence, and adds it as a take.
-- Local worker: runs in the user's normal Python environment, validates the LTX checkout and model paths, then executes LTX's `run_hdr_ic_lora.py`.
+- Local worker: runs in the user's normal Python environment, validates the LTX checkout and model paths, then executes the local HDR conversion pipeline.
 - Config: lives in `~/.ltx-hdr-resolve/config.json` so model weights, output folders, and the LTX repo stay local to the machine.
 
 ## Why this shape
@@ -66,7 +66,7 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 - `uv` for setting up the LTX repo environment.
 - NVIDIA GPU with enough VRAM for the LTX HDR workflow.
 - Local copies of the LTX model files:
-  - `ltx-2.3-22b-distilled.safetensors`
+  - `ltx-2.3-22b-distilled-1.1.safetensors`
   - `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`
   - `ltx-2.3-22b-ic-lora-hdr-0.9.safetensors`
   - `ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors`

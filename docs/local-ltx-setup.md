@@ -5,7 +5,7 @@ Use this when preparing a workstation for the Resolve plugin.
 ## 1. Clone LTX
 
 ```bash
-git clone https://github.com/Lightricks/LTX-Video.git
+git clone https://github.com/Lightricks/LTX-2.git LTX-Video
 cd LTX-Video
 ```
 
@@ -24,7 +24,7 @@ uv pip install -e packages/ltx-core -e packages/ltx-pipelines -e packages/ltx-tr
 
 Download these files from the LTX 2.3 Hugging Face collection and keep them in a local model directory:
 
-- `ltx-2.3-22b-distilled.safetensors`
+- `ltx-2.3-22b-distilled-1.1.safetensors`
 - `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`
 - `ltx-2.3-22b-ic-lora-hdr-0.9.safetensors`
 - `ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors`
@@ -40,7 +40,7 @@ Edit `~/.ltx-hdr-resolve/config.json`:
 
 - `ltx_repo_path`: local `LTX-Video` checkout.
 - `ltx_python`: usually `LTX-Video/.venv/bin/python`.
-- `ltx_hdr_script`: usually `run_hdr_ic_lora.py`.
+- `ltx_hdr_script`: usually `packages/ltx-pipelines/src/ltx_pipelines/hdr_ic_lora.py`.
 - `output_root`: local folder for job logs, MP4 previews, and EXR frames.
 - model paths: absolute paths to the four downloaded files.
 

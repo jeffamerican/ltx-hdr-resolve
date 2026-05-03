@@ -119,8 +119,8 @@ function Ensure-LtxCheckout {
     [string]$LtxRepo
   )
 
-  $ltxScript = Join-Path $LtxRepo "run_hdr_ic_lora.py"
-  if (Test-Path $ltxScript) {
+  $pipelineScript = Join-Path $LtxRepo "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"
+  if (Test-Path $pipelineScript) {
     Write-Ok "LTX checkout found: $LtxRepo"
     return
   }
@@ -130,20 +130,20 @@ function Ensure-LtxCheckout {
   }
 
   Write-Step "Downloading LTX-Video"
-  $zipPath = Join-Path $env:TEMP "LTX-Video-main.zip"
-  $extractRoot = Join-Path $env:TEMP ("LTX-Video-" + [guid]::NewGuid().ToString("N"))
-  Invoke-WebRequest -Uri "https://github.com/Lightricks/LTX-Video/archive/refs/heads/main.zip" -OutFile $zipPath
+  $zipPath = Join-Path $env:TEMP "LTX-2-main.zip"
+  $extractRoot = Join-Path $env:TEMP ("LTX-2-" + [guid]::NewGuid().ToString("N"))
+  Invoke-WebRequest -Uri "https://github.com/Lightricks/LTX-2/archive/refs/heads/main.zip" -OutFile $zipPath
   Expand-Archive -Path $zipPath -DestinationPath $extractRoot -Force
-  $downloadedRoot = Join-Path $extractRoot "LTX-Video-main"
-  if (-not (Test-Path (Join-Path $downloadedRoot "run_hdr_ic_lora.py"))) {
-    throw "Downloaded LTX-Video archive did not contain run_hdr_ic_lora.py"
+  $downloadedRoot = Join-Path $extractRoot "LTX-2-main"
+  if (-not (Test-Path (Join-Path $downloadedRoot "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"))) {
+    throw "Downloaded LTX-2 archive did not contain the HDR IC-LoRA pipeline."
   }
 
   if (Test-Path $LtxRepo) {
-    Remove-Item -Path $LtxRepo -Force
+    Remove-Item -Path $LtxRepo -Recurse -Force
   }
   Move-Item -Path $downloadedRoot -Destination $LtxRepo
-  Write-Ok "LTX-Video downloaded to: $LtxRepo"
+  Write-Ok "LTX-2 downloaded to: $LtxRepo"
 }
 
 function Ensure-LtxPythonEnvironment {
@@ -155,14 +155,27 @@ function Ensure-LtxPythonEnvironment {
 
   if (-not (Test-Path $LtxPython)) {
     Invoke-Step "Creating LTX Python 3.11 environment" {
-      & $Uv venv --python 3.11 (Join-Path $LtxRepo ".venv")
+      Push-Location $LtxRepo
+      try {
+        & $Uv venv --python 3.11
+      } finally {
+        Pop-Location
+      }
     }
   } else {
     Write-Ok "LTX Python environment found: $LtxPython"
   }
 
   Invoke-Step "Installing LTX Python packages" {
-    & $Uv pip install --python $LtxPython -e (Join-Path $LtxRepo "packages\ltx-core") -e (Join-Path $LtxRepo "packages\ltx-pipelines") -e (Join-Path $LtxRepo "packages\ltx-trainer") huggingface_hub hf_xet
+    Push-Location $LtxRepo
+    try {
+      & $Uv sync --frozen
+      if ($LASTEXITCODE -eq 0) {
+        & $Uv pip install --python $LtxPython huggingface_hub hf_xet
+      }
+    } finally {
+      Pop-Location
+    }
   }
 }
 
@@ -268,14 +281,14 @@ function Get-MissingRuntimeInputs {
   }
 
   if (-not [string]::IsNullOrWhiteSpace($LtxRepo)) {
-    $ltxScript = Join-Path $LtxRepo "run_hdr_ic_lora.py"
+    $ltxScript = Join-Path $LtxRepo "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"
     if (-not (Test-Path $ltxScript)) {
-      $missing += "LTX HDR script: $ltxScript"
+      $missing += "LTX HDR pipeline: $ltxScript"
     }
   }
 
   $modelFiles = @(
-    "ltx-2.3-22b-distilled.safetensors",
+    "ltx-2.3-22b-distilled-1.1.safetensors",
     "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
     "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors",
     "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"
@@ -339,9 +352,9 @@ try {
   $config = [ordered]@{
     ltx_repo_path = $ltxRepo
     ltx_python = $ltxPython
-    ltx_hdr_script = "run_hdr_ic_lora.py"
+    ltx_hdr_script = "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"
     output_root = $outputRoot
-    distilled_checkpoint = Join-Path $modelDir "ltx-2.3-22b-distilled.safetensors"
+    distilled_checkpoint = Join-Path $modelDir "ltx-2.3-22b-distilled-1.1.safetensors"
     upscaler = Join-Path $modelDir "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     lora = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors"
     text_embeddings = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"
