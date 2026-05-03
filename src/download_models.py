@@ -29,6 +29,31 @@ MODEL_FILES = (
 )
 
 
+def request_json(url, token):
+    headers = {"User-Agent": "ltx-hdr-resolve-installer"}
+    if token:
+        headers["Authorization"] = "Bearer " + token.strip()
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def validate_token(token):
+    if not token:
+        raise RuntimeError("No Hugging Face token was provided.")
+    if not token.startswith("hf_"):
+        raise RuntimeError("The Hugging Face token should usually start with 'hf_'.")
+
+    try:
+        request_json("https://huggingface.co/api/whoami-v2", token)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise RuntimeError("Hugging Face rejected the token. Create a read token and paste the full value.") from exc
+        raise RuntimeError(f"Hugging Face token check failed with HTTP {exc.code}.") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Hugging Face to validate token: {exc}") from exc
+
+
 def format_size(num_bytes):
     units = ("B", "KB", "MB", "GB", "TB")
     size = float(num_bytes)
@@ -84,6 +109,8 @@ def direct_download(repo_id, filename, output_dir, token):
 
 
 def download_models(output_dir, token):
+    validate_token(token)
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

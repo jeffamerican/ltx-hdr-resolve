@@ -179,21 +179,6 @@ function Ensure-LtxPythonEnvironment {
   }
 }
 
-function Get-PlainTextFromSecureString {
-  param([securestring]$SecureString)
-
-  if ($null -eq $SecureString -or $SecureString.Length -eq 0) {
-    return ""
-  }
-
-  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
-  try {
-    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-  } finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-  }
-}
-
 function Get-HuggingFaceToken {
   if (-not [string]::IsNullOrWhiteSpace($env:HF_TOKEN)) {
     Write-Ok "Using Hugging Face token from HF_TOKEN environment variable"
@@ -219,13 +204,13 @@ function Get-HuggingFaceToken {
   }
 
   Write-Host ""
-  Write-Host "Paste the Hugging Face read token. Input is hidden."
-  $secureToken = Read-Host "Hugging Face token" -AsSecureString
-  $token = Get-PlainTextFromSecureString $secureToken
+  Write-Host "Paste the Hugging Face read token and press Enter."
+  Write-Warn "The token will be visible while pasting. The installer does not save it."
+  $token = Read-Host "Hugging Face token"
   if ([string]::IsNullOrWhiteSpace($token)) {
     throw "A Hugging Face token is required to download the gated LTX model files."
   }
-  return $token
+  return $token.Trim()
 }
 
 function Ensure-Models {
