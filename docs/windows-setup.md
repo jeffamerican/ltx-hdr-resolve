@@ -18,7 +18,15 @@ Download the four model files listed in [local-ltx-setup.md](local-ltx-setup.md)
 
 ## 2. Configure the plugin
 
-From this repository:
+The easy path is to double-click this file from the repository root:
+
+```text
+Install-Windows.cmd
+```
+
+It installs the Resolve menu script, creates the config file if needed, opens the config in Notepad, and runs the diagnostic when the example paths have been replaced.
+
+Manual equivalent from this repository:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ltx-hdr-resolve"
@@ -50,13 +58,13 @@ The command prints a `manifest.json` path. Open that file and confirm `status` i
 Current user install:
 
 ```powershell
-.\scripts\install_resolve_script.ps1
+.\Install-Windows.cmd
 ```
 
 All-users install, from an elevated PowerShell:
 
 ```powershell
-.\scripts\install_resolve_script.ps1 -AllUsers
+.\scripts\install_windows.ps1 -AllUsers
 ```
 
 Restart Resolve. The command appears under:

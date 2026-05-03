@@ -78,6 +78,16 @@ For Windows, use the dedicated guide: [docs/windows-setup.md](docs/windows-setup
 
 ## Windows quick start
 
+Double-click:
+
+```text
+Install-Windows.cmd
+```
+
+The one-click installer copies the Resolve menu script, creates `~\.ltx-hdr-resolve\config.json` if needed, opens it for editing, and runs the diagnostic when the paths are filled in.
+
+Manual equivalent:
+
 ```powershell
 git clone https://github.com/jeffamerican/ltx-hdr-resolve.git
 cd ltx-hdr-resolve
