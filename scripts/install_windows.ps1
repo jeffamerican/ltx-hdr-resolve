@@ -1,6 +1,5 @@
 param(
   [switch]$AllUsers,
-  [switch]$SkipNotepad,
   [switch]$NoPause
 )
 
@@ -44,11 +43,112 @@ function Find-PythonCommand {
   return @()
 }
 
+function Clean-PathInput {
+  param([string]$Value)
+  return [Environment]::ExpandEnvironmentVariables($Value.Trim().Trim('"'))
+}
+
+function Read-PathDefault {
+  param(
+    [string]$Label,
+    [string]$DefaultValue
+  )
+
+  Write-Host ""
+  Write-Host $Label -ForegroundColor White
+  $answer = Read-Host "[$DefaultValue]"
+  if ([string]::IsNullOrWhiteSpace($answer)) {
+    return (Clean-PathInput $DefaultValue)
+  }
+  return (Clean-PathInput $answer)
+}
+
+function Read-ExistingConfig {
+  param([string]$Path)
+
+  if (-not (Test-Path $Path)) {
+    return $null
+  }
+
+  try {
+    return (Get-Content -Raw -Path $Path | ConvertFrom-Json)
+  } catch {
+    Write-Warn "Existing config is not valid JSON. The installer will rewrite it."
+    return $null
+  }
+}
+
+function Get-ConfigValue {
+  param(
+    [object]$Config,
+    [string]$Name,
+    [string]$Fallback
+  )
+
+  if ($null -eq $Config) {
+    return $Fallback
+  }
+
+  $property = $Config.PSObject.Properties[$Name]
+  if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+    return $Fallback
+  }
+
+  $value = [string]$property.Value
+  if (
+    $value.Contains("YourName") -or
+    $value.Contains("/absolute/path") -or
+    $value.Contains("D:\LTX_Models") -or
+    $value.Contains("D:\LTX_HDR_Output")
+  ) {
+    return $Fallback
+  }
+
+  return $value
+}
+
+function Get-DefaultModelDir {
+  param(
+    [object]$Config,
+    [string]$RepoRoot
+  )
+
+  $existingLora = Get-ConfigValue $Config "lora" ""
+  if (-not [string]::IsNullOrWhiteSpace($existingLora)) {
+    return (Split-Path -Parent $existingLora)
+  }
+
+  return (Join-Path $RepoRoot "models")
+}
+
+function Get-DefaultOutputDir {
+  param(
+    [object]$Config,
+    [string]$RepoRoot
+  )
+
+  $existing = Get-ConfigValue $Config "output_root" ""
+  if (-not [string]::IsNullOrWhiteSpace($existing)) {
+    return $existing
+  }
+
+  return (Join-Path $RepoRoot "output")
+}
+
+function Write-LtxConfig {
+  param(
+    [string]$Path,
+    [object]$Config
+  )
+
+  $json = $Config | ConvertTo-Json -Depth 5
+  Set-Content -Path $Path -Value $json -Encoding UTF8
+}
+
 try {
   $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
   $ConfigDir = Join-Path $env:USERPROFILE ".ltx-hdr-resolve"
   $ConfigPath = Join-Path $ConfigDir "config.json"
-  $TemplatePath = Join-Path $RepoRoot "config\config.example.windows.json"
 
   Write-Host "LTX HDR Resolve Windows Installer" -ForegroundColor White
   Write-Host "Repo: $RepoRoot"
@@ -64,41 +164,42 @@ try {
   Write-Step "Preparing local config"
   New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 
-  $createdConfig = $false
-  if (-not (Test-Path $ConfigPath)) {
-    Copy-Item -Path $TemplatePath -Destination $ConfigPath
-    $createdConfig = $true
-    Write-Ok "Created $ConfigPath"
-  } else {
-    Write-Ok "Config already exists at $ConfigPath"
+  $existingConfig = Read-ExistingConfig $ConfigPath
+  $defaultRepo = Get-ConfigValue $existingConfig "ltx_repo_path" (Join-Path $RepoRoot "LTX-Video")
+  $ltxRepo = Read-PathDefault "LTX-Video folder" $defaultRepo
+
+  $modelDir = Read-PathDefault "Folder containing the four LTX .safetensors model files" (Get-DefaultModelDir $existingConfig $RepoRoot)
+  $outputRoot = Read-PathDefault "Output folder for LTX HDR jobs" (Get-DefaultOutputDir $existingConfig $RepoRoot)
+  $ltxPython = Join-Path $ltxRepo ".venv\Scripts\python.exe"
+  New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+  New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+  Write-Ok "Using LTX Python executable: $ltxPython"
+
+  $config = [ordered]@{
+    ltx_repo_path = $ltxRepo
+    ltx_python = $ltxPython
+    ltx_hdr_script = "run_hdr_ic_lora.py"
+    output_root = $outputRoot
+    distilled_checkpoint = Join-Path $modelDir "ltx-2.3-22b-distilled.safetensors"
+    upscaler = Join-Path $modelDir "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    lora = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors"
+    text_embeddings = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"
+    exr_half = $true
+    high_quality = $true
+    skip_mp4 = $false
+    no_save_exr = $false
+    seed = 10
+    max_frames = 161
+    extra_env = @{}
   }
 
-  $configText = Get-Content -Raw -Path $ConfigPath
-  $needsEditing = $createdConfig -or $configText.Contains("YourName") -or $configText.Contains("D:\LTX_Models")
-
-  if ($needsEditing) {
-    Write-Warn "Config still contains example paths."
-    Write-Host "Set these paths before running a conversion:"
-    Write-Host "  - ltx_repo_path"
-    Write-Host "  - ltx_python"
-    Write-Host "  - output_root"
-    Write-Host "  - the four model file paths"
-
-    if (-not $SkipNotepad) {
-      Write-Host ""
-      Write-Host "Opening config in Notepad. Save it, then close Notepad to continue."
-      Start-Process notepad.exe -ArgumentList "`"$ConfigPath`"" -Wait
-      $configText = Get-Content -Raw -Path $ConfigPath
-      $needsEditing = $configText.Contains("YourName") -or $configText.Contains("D:\LTX_Models")
-    }
-  }
+  Write-LtxConfig $ConfigPath ([pscustomobject]$config)
+  Write-Ok "Wrote $ConfigPath"
 
   Write-Step "Checking local runtime"
   $pythonCommand = Find-PythonCommand
   if ($pythonCommand.Count -eq 0) {
     Write-Warn "Python was not found on PATH. Install Python 3.11, then run this installer again."
-  } elseif ($needsEditing) {
-    Write-Warn "Skipping diagnostic because config still has example paths."
   } else {
     $pythonExe = $pythonCommand[0]
     $pythonArgs = @()

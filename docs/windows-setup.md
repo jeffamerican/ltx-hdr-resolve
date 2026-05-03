@@ -7,14 +7,14 @@ This plugin is designed to run the LTX HDR conversion locally on the Windows wor
 Install Python 3.11, Git, and `uv`, then clone LTX:
 
 ```powershell
-git clone https://github.com/Lightricks/LTX-Video.git C:\Users\YourName\src\LTX-Video
-cd C:\Users\YourName\src\LTX-Video
+git clone https://github.com/Lightricks/LTX-Video.git .\LTX-Video
+cd .\LTX-Video
 uv venv --python 3.11
 .\.venv\Scripts\Activate.ps1
 uv pip install -e packages/ltx-core -e packages/ltx-pipelines -e packages/ltx-trainer
 ```
 
-Download the four model files listed in [local-ltx-setup.md](local-ltx-setup.md), for example into `D:\LTX_Models`.
+Download the four model files listed in [local-ltx-setup.md](local-ltx-setup.md) into `.\models` inside this repository.
 
 ## 2. Configure the plugin
 
@@ -24,17 +24,23 @@ The easy path is to double-click this file from the repository root:
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, creates the config file if needed, opens the config in Notepad, and runs the diagnostic when the example paths have been replaced.
+It installs the Resolve menu script, asks for the local folders, writes the config file, and runs the diagnostic.
+
+The installer prompts for paths and proposes folders inside the cloned `ltx-hdr-resolve` folder:
+
+```text
+.\LTX-Video
+.\models
+.\output
+```
+
+Press Enter at each prompt to accept those defaults.
 
 Manual equivalent from this repository:
 
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ltx-hdr-resolve"
-Copy-Item .\config\config.example.windows.json "$env:USERPROFILE\.ltx-hdr-resolve\config.json"
-notepad "$env:USERPROFILE\.ltx-hdr-resolve\config.json"
+.\scripts\install_windows.ps1
 ```
-
-Update every path in the config to match the local machine.
 
 ## 3. Diagnose before opening Resolve
 
