@@ -171,7 +171,7 @@ function Ensure-LtxPythonEnvironment {
     try {
       & $Uv sync --frozen
       if ($LASTEXITCODE -eq 0) {
-        & $Uv pip install --python $LtxPython huggingface_hub hf_xet
+        & $Uv pip install --python $LtxPython requests
       }
     } finally {
       Pop-Location

@@ -3,6 +3,9 @@
 
 import argparse
 import os
+import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -26,12 +29,61 @@ MODEL_FILES = (
 )
 
 
-def download_models(output_dir, token):
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise SystemExit("huggingface_hub is not installed in the LTX Python environment.") from exc
+def format_size(num_bytes):
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(num_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f} {unit}"
+        size /= 1024
 
+
+def direct_download(repo_id, filename, output_dir, token):
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    target = output_dir / filename
+    part = output_dir / (filename + ".part")
+
+    headers = {"User-Agent": "ltx-hdr-resolve-installer"}
+    if token:
+        headers["Authorization"] = "Bearer " + token.strip()
+
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            total = int(response.headers.get("Content-Length") or "0")
+            downloaded = 0
+            with open(part, "wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        percent = downloaded / total * 100
+                        print(
+                            f"\r  {format_size(downloaded)} / {format_size(total)} ({percent:.1f}%)",
+                            end="",
+                            flush=True,
+                        )
+                    else:
+                        print(f"\r  {format_size(downloaded)}", end="", flush=True)
+            print()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        detail = body[:1000].replace("\n", " ")
+        raise RuntimeError(f"HTTP {exc.code} downloading {repo_id}/{filename}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Network error downloading {repo_id}/{filename}: {exc}") from exc
+
+    if part.stat().st_size < 1024 * 1024:
+        raise RuntimeError(f"Downloaded file is unexpectedly small: {part}")
+
+    part.replace(target)
+    return target
+
+
+def download_models(output_dir, token):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -42,14 +94,11 @@ def download_models(output_dir, token):
             continue
 
         print("Downloading " + repo_id + "/" + filename)
-        hf_hub_download(
-            repo_id=repo_id,
-            filename=filename,
-            local_dir=str(output_dir),
-            local_dir_use_symlinks=False,
-            token=token or None,
-            resume_download=True,
-        )
+        try:
+            direct_download(repo_id, filename, output_dir, token)
+        except RuntimeError as exc:
+            print("ERROR: " + str(exc), file=sys.stderr)
+            raise SystemExit(1) from exc
         print("OK: downloaded " + str(target))
 
 
