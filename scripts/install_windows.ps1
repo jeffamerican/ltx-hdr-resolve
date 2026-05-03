@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $HfBaseModelUrl = "https://huggingface.co/Lightricks/LTX-2.3"
 $HfHdrModelUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR"
+$HfHdrFilesUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main"
 $HfTokenUrl = "https://huggingface.co/settings/tokens/new?tokenType=read"
 $MinimumFreeGb = 120
 
@@ -216,16 +217,20 @@ function Get-HuggingFaceToken {
   Write-Host "  1. $HfBaseModelUrl"
   Write-Host "  2. $HfHdrModelUrl"
   Write-Host ""
-  Write-Host "Then create a read token here:"
+  Write-Host "On the HDR page, complete the access form/request button. The Files tab must be visible before downloads will work:"
+  Write-Host "  $HfHdrFilesUrl"
+  Write-Host ""
+  Write-Host "Then create or use a read token here:"
   Write-Host "  $HfTokenUrl"
   Write-Host ""
   $openAnswer = Read-Host "Open these Hugging Face pages now? [Y/n]"
   if ([string]::IsNullOrWhiteSpace($openAnswer) -or $openAnswer.ToLowerInvariant().StartsWith("y")) {
     Start-Process $HfBaseModelUrl
     Start-Process $HfHdrModelUrl
+    Start-Process $HfHdrFilesUrl
     Start-Process $HfTokenUrl
     Write-Host ""
-    Write-Host "Accept the model terms in the browser, create/copy a read token, then return here."
+    Write-Host "Complete the HDR model access form/request in the browser, verify the Files tab opens, create/copy a read token, then return here."
   }
 
   Write-Host ""

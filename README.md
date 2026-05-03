@@ -44,8 +44,11 @@ The installer downloads LTX, creates the local Python environment, and downloads
 Required Hugging Face pages:
 
 - [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
-- [LTX HDR IC-LoRA model](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [LTX HDR IC-LoRA model access form](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [LTX HDR IC-LoRA Files tab](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main)
 - [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
+
+The HDR model is gated. You must complete the Hugging Face access form/request for the HDR model before downloads work. The installer checks this before downloading the large model files.
 
 Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose different folders.
 

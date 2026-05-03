@@ -11,10 +11,11 @@ Double-click `Install-Windows.cmd`. It installs `uv` if needed, downloads LTX, c
 The only account step is Hugging Face model access. The installer opens these pages when needed:
 
 - [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
-- [LTX HDR IC-LoRA model](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [LTX HDR IC-LoRA model access form](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
+- [LTX HDR IC-LoRA Files tab](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main)
 - [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
 
-Accept the model access terms in the browser, create a read token, then paste it into the installer. Input is hidden.
+Complete the HDR model access form/request in the browser, verify the Files tab opens, create a read token, then paste it into the installer.
 
 ## 2. Configure the plugin
 

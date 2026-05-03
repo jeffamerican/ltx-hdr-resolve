@@ -29,6 +29,10 @@ MODEL_FILES = (
 )
 
 
+class AccessRequired(RuntimeError):
+    pass
+
+
 def request_json(url, token):
     headers = {"User-Agent": "ltx-hdr-resolve-installer"}
     if token:
@@ -52,6 +56,33 @@ def validate_token(token):
         raise RuntimeError(f"Hugging Face token check failed with HTTP {exc.code}.") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach Hugging Face to validate token: {exc}") from exc
+
+
+def check_repo_file_access(repo_id, filename, token):
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    headers = {"User-Agent": "ltx-hdr-resolve-installer"}
+    if token:
+        headers["Authorization"] = "Bearer " + token.strip()
+    request = urllib.request.Request(url, headers=headers, method="HEAD")
+    try:
+        with urllib.request.urlopen(request):
+            return
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise AccessRequired(
+                f"Access to {repo_id} is not enabled for this Hugging Face account. "
+                f"Open https://huggingface.co/{repo_id}, complete the access form, then rerun the installer."
+            ) from exc
+        raise RuntimeError(f"Hugging Face access check failed for {repo_id}/{filename}: HTTP {exc.code}") from exc
+
+
+def preflight_model_access(token):
+    validate_token(token)
+    check_repo_file_access(
+        "Lightricks/LTX-2.3-22b-IC-LoRA-HDR",
+        "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors",
+        token,
+    )
 
 
 def format_size(num_bytes):
@@ -109,7 +140,7 @@ def direct_download(repo_id, filename, output_dir, token):
 
 
 def download_models(output_dir, token):
-    validate_token(token)
+    preflight_model_access(token)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +154,9 @@ def download_models(output_dir, token):
         print("Downloading " + repo_id + "/" + filename)
         try:
             direct_download(repo_id, filename, output_dir, token)
+        except AccessRequired as exc:
+            print("ACCESS REQUIRED: " + str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
         except RuntimeError as exc:
             print("ERROR: " + str(exc), file=sys.stderr)
             raise SystemExit(1) from exc
