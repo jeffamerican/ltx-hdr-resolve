@@ -11,8 +11,7 @@ For Windows users, the install path is:
 ```text
 1. Download or clone this repository.
 2. Double-click Install-Windows.cmd.
-3. Press Enter to accept the default local folders, or type custom paths.
-4. Restart DaVinci Resolve.
+3. Restart DaVinci Resolve.
 ```
 
 The installer file is at the repository root:
@@ -21,7 +20,7 @@ The installer file is at the repository root:
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, asks where the local LTX files should live, writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`, and runs a diagnostic.
+It installs the Resolve menu script, writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`, and uses folders next to `Install-Windows.cmd`.
 
 By default, it keeps everything inside the cloned `ltx-hdr-resolve` folder:
 
@@ -41,6 +40,8 @@ Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
 The installer does not bundle LTX or the model weights. Those stay local on your workstation because the HDR model files are large and GPU-specific. See [Windows workstation setup](docs/windows-setup.md) for the LTX/Python/model preparation steps.
 
 For the default install, clone LTX into `LTX-Video` and put the four `.safetensors` files in `models`.
+
+Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose different folders.
 
 ## What This Does
 

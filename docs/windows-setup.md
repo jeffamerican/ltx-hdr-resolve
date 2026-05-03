@@ -24,9 +24,9 @@ The easy path is to double-click this file from the repository root:
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, asks for the local folders, writes the config file, and runs the diagnostic.
+It installs the Resolve menu script, writes the config file, and uses folders next to `Install-Windows.cmd`.
 
-The installer prompts for paths and proposes folders inside the cloned `ltx-hdr-resolve` folder:
+The default folders are:
 
 ```text
 .\LTX-Video
@@ -34,12 +34,18 @@ The installer prompts for paths and proposes folders inside the cloned `ltx-hdr-
 .\output
 ```
 
-Press Enter at each prompt to accept those defaults.
+If those files are not present yet, the installer prints the exact missing paths and exits cleanly. It does not reuse stale paths from an older config.
 
 Manual equivalent from this repository:
 
 ```powershell
 .\scripts\install_windows.ps1
+```
+
+Advanced custom folders:
+
+```powershell
+.\scripts\install_windows.ps1 -CustomPaths
 ```
 
 ## 3. Diagnose before opening Resolve
