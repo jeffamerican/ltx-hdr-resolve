@@ -1,0 +1,17 @@
+{
+  "ltx_repo_path": "C:\\Users\\YourName\\src\\LTX-Video",
+  "ltx_python": "C:\\Users\\YourName\\src\\LTX-Video\\.venv\\Scripts\\python.exe",
+  "ltx_hdr_script": "run_hdr_ic_lora.py",
+  "output_root": "D:\\LTX_HDR_Output",
+  "distilled_checkpoint": "D:\\LTX_Models\\ltx-2.3-22b-distilled.safetensors",
+  "upscaler": "D:\\LTX_Models\\ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+  "lora": "D:\\LTX_Models\\ltx-2.3-22b-ic-lora-hdr-0.9.safetensors",
+  "text_embeddings": "D:\\LTX_Models\\ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors",
+  "exr_half": true,
+  "high_quality": true,
+  "skip_mp4": false,
+  "no_save_exr": false,
+  "seed": 10,
+  "max_frames": 161,
+  "extra_env": {}
+}
