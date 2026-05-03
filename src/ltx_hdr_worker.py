@@ -24,7 +24,7 @@ REQUIRED_CONFIG_KEYS = (
 
 
 def load_config(path):
-    with open(path, "r") as handle:
+    with open(path, "r", encoding="utf-8-sig") as handle:
         config = json.load(handle)
     return config
 

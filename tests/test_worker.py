@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import sys
@@ -42,6 +43,15 @@ class WorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.make_config(Path(temp_dir))
             self.assertEqual([], ltx_hdr_worker.validate_config(config))
+
+    def test_load_config_accepts_windows_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.json"
+            path.write_text(json.dumps({"ltx_repo_path": "C:\\LTX-Video"}), encoding="utf-8-sig")
+
+            config = ltx_hdr_worker.load_config(path)
+
+        self.assertEqual("C:\\LTX-Video", config["ltx_repo_path"])
 
     def test_build_ltx_command_matches_hdr_script_flags(self):
         with tempfile.TemporaryDirectory() as temp_dir:
