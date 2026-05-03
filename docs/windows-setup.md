@@ -6,6 +6,8 @@ This plugin is designed to run the LTX HDR conversion locally on the Windows wor
 
 Double-click `Install-Windows.cmd`. It installs `uv` if needed, downloads LTX, creates the Python 3.11 environment, installs LTX packages, and downloads the model files.
 
+**Disk space warning:** the model files are huge. The base checkpoint is about 43 GB by itself, and the full setup plus caches and generated EXR output can easily exceed 100 GB. Keep at least **120 GB free** on the drive containing this repository before running the installer.
+
 The only account step is Hugging Face model access. The installer opens these pages when needed:
 
 - [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)

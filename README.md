@@ -22,6 +22,8 @@ Install-Windows.cmd
 
 It installs the Resolve menu script, writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`, and uses folders next to `Install-Windows.cmd`.
 
+**Disk space warning:** this installer downloads very large model files. The base checkpoint is about 43 GB by itself, and the full local setup plus caches and generated EXR output can easily exceed 100 GB. Keep at least **120 GB free** on the drive containing `ltx-hdr-resolve` before running the installer.
+
 By default, it keeps everything inside the cloned `ltx-hdr-resolve` folder:
 
 ```text
@@ -65,6 +67,7 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 - Python 3.11 runtime for LTX.
 - `uv` for setting up the LTX repo environment.
 - NVIDIA GPU with enough VRAM for the LTX HDR workflow.
+- At least 120 GB free disk space on the install/output drive.
 - Local copies of the LTX model files:
   - `ltx-2.3-22b-distilled-1.1.safetensors`
   - `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`

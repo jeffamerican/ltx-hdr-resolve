@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $HfBaseModelUrl = "https://huggingface.co/Lightricks/LTX-2.3"
 $HfHdrModelUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR"
 $HfTokenUrl = "https://huggingface.co/settings/tokens/new?tokenType=read"
+$MinimumFreeGb = 120
 
 function Write-Step {
   param([string]$Message)
@@ -101,6 +102,30 @@ function Ensure-Uv {
   }
   Write-Ok "uv installed: $uv"
   return $uv
+}
+
+function Assert-FreeSpace {
+  param(
+    [string]$Path,
+    [int]$MinimumGb
+  )
+
+  $target = $Path
+  while (-not (Test-Path $target)) {
+    $parent = Split-Path -Parent $target
+    if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $target) {
+      break
+    }
+    $target = $parent
+  }
+
+  $root = [System.IO.Path]::GetPathRoot((Resolve-Path $target).Path)
+  $drive = Get-PSDrive -Name $root.Substring(0, 1)
+  $freeGb = [math]::Round($drive.Free / 1GB, 1)
+  Write-Host "Free space on $root $freeGb GB"
+  if ($freeGb -lt $MinimumGb) {
+    throw "Not enough free disk space. The LTX HDR install needs at least $MinimumGb GB free on $root for model downloads, Python packages, caches, and generated EXR output."
+  }
 }
 
 function Write-LtxConfig {
@@ -328,6 +353,10 @@ try {
   New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
   New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
   Write-Ok "Using LTX Python executable: $ltxPython"
+
+  Write-Step "Checking disk space"
+  Write-Warn "LTX HDR uses very large model files and EXR outputs. Keep at least $MinimumFreeGb GB free on the install drive."
+  Assert-FreeSpace $RepoRoot $MinimumFreeGb
 
   $uv = Ensure-Uv
   Ensure-LtxCheckout $ltxRepo
