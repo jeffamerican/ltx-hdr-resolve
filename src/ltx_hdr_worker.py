@@ -8,9 +8,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
+MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 REQUIRED_CONFIG_KEYS = (
     "ltx_repo_path",
     "ltx_python",
@@ -144,6 +146,57 @@ def write_manifest(path, payload):
     return path
 
 
+def emit_manifest(path):
+    print(MANIFEST_MARKER + str(path))
+
+
+def make_job_paths(args, config=None):
+    input_path = Path(args.input)
+    timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    clip_name = sanitize_name(args.clip_name or input_path.stem)
+    output_root = ""
+    if config:
+        output_root = config.get("output_root") or ""
+    if output_root:
+        root = Path(output_root)
+    else:
+        root = Path(tempfile.gettempdir()) / "ltx-hdr-resolve"
+    job_dir = root / (timestamp + "_" + clip_name)
+    output_dir = job_dir / "ltx_output"
+    log_path = job_dir / "ltx_hdr.log"
+    manifest_path = job_dir / "manifest.json"
+    return job_dir, output_dir, log_path, manifest_path
+
+
+def write_failure_manifest(args, config, returncode, error, status="failed", errors=None, command=None, job_paths=None):
+    if job_paths:
+        job_dir, output_dir, log_path, manifest_path = job_paths
+    else:
+        job_dir, output_dir, log_path, manifest_path = make_job_paths(args, config)
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    manifest = {
+        "status": status,
+        "started_at": now,
+        "finished_at": now,
+        "returncode": returncode,
+        "input": str(Path(args.input)),
+        "clip_name": args.clip_name,
+        "job_dir": str(job_dir),
+        "output_dir": str(output_dir),
+        "log_path": str(log_path),
+        "error": error,
+        "errors": errors or [],
+        "exr_dir": "",
+        "preview_mp4": "",
+        "exr_frame_count": 0,
+    }
+    if command:
+        manifest["command"] = command
+    write_manifest(manifest_path, manifest)
+    emit_manifest(manifest_path)
+    return manifest_path
+
+
 def diagnose(args):
     config = load_config(args.config)
     errors = validate_config(config)
@@ -161,7 +214,14 @@ def diagnose(args):
 
 
 def convert(args):
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except Exception as exc:
+        message = "Could not load config: " + str(exc)
+        print("ERROR: " + message, file=sys.stderr)
+        write_failure_manifest(args, None, 2, message, errors=[message])
+        return 2
+
     errors = validate_config(config)
     input_path = Path(args.input)
     if not input_path.exists():
@@ -169,35 +229,47 @@ def convert(args):
     if errors:
         for error in errors:
             print("ERROR: " + error, file=sys.stderr)
+        write_failure_manifest(args, config, 2, "\n".join(errors), errors=errors)
         return 2
 
-    timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    clip_name = sanitize_name(args.clip_name or input_path.stem)
-    job_dir = Path(config["output_root"]) / (timestamp + "_" + clip_name)
-    output_dir = job_dir / "ltx_output"
-    log_path = job_dir / "ltx_hdr.log"
-    manifest_path = job_dir / "manifest.json"
+    job_dir, output_dir, log_path, manifest_path = make_job_paths(args, config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    command = build_ltx_command(config, input_path, output_dir)
+    try:
+        command = build_ltx_command(config, input_path, output_dir)
+    except Exception as exc:
+        status = "unsupported" if isinstance(exc, RuntimeError) else "failed"
+        returncode = 4 if status == "unsupported" else 3
+        if status == "unsupported":
+            print("LTX HDR conversion is not available for the installed LTX-2 pipeline yet.", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        write_failure_manifest(args, config, returncode, str(exc), status=status, job_paths=(job_dir, output_dir, log_path, manifest_path))
+        return returncode
+
     env = os.environ.copy()
     env["OPENCV_IO_ENABLE_OPENEXR"] = "1"
     env.update({str(k): str(v) for k, v in config.get("extra_env", {}).items()})
 
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    with open(log_path, "w") as log:
-        log.write("Command:\n")
-        log.write(json.dumps(command, indent=2))
-        log.write("\n\n")
-        log.flush()
-        completed = subprocess.run(
-            command,
-            cwd=config["ltx_repo_path"],
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-        )
+    try:
+        with open(log_path, "w") as log:
+            log.write("Command:\n")
+            log.write(json.dumps(command, indent=2))
+            log.write("\n\n")
+            log.flush()
+            completed = subprocess.run(
+                command,
+                cwd=config["ltx_repo_path"],
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+    except Exception as exc:
+        message = "Could not run LTX HDR command: " + str(exc)
+        print(message, file=sys.stderr)
+        write_failure_manifest(args, config, 3, message, command=command, job_paths=(job_dir, output_dir, log_path, manifest_path))
+        return 3
 
     outputs = find_outputs(input_path, output_dir)
     status = "completed" if completed.returncode == 0 and outputs["exr_dir"] else "failed"
@@ -218,10 +290,10 @@ def convert(args):
 
     if status != "completed":
         print("LTX HDR conversion failed. See log: " + str(log_path), file=sys.stderr)
-        print(str(manifest_path))
+        emit_manifest(manifest_path)
         return 3
 
-    print(str(manifest_path))
+    emit_manifest(manifest_path)
     return 0
 
 

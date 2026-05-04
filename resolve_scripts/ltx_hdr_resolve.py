@@ -139,6 +139,26 @@ def _load_manifest(manifest_path):
         return json.load(handle)
 
 
+def _manifest_path_from_output(output):
+    marker = "LTX_HDR_MANIFEST="
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith(marker):
+            return line[len(marker) :].strip()
+    return ""
+
+
+def _format_worker_failure(manifest, manifest_path, fallback):
+    detail = manifest.get("error") or fallback or "Unknown worker failure."
+    message = "LTX HDR conversion failed.\n" + detail
+    log_path = manifest.get("log_path")
+    if log_path:
+        message += "\n\nLog: " + log_path
+    if manifest_path:
+        message += "\nManifest: " + manifest_path
+    return message
+
+
 def _find_exr_sequence(exr_dir):
     frames = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
     if not frames:
@@ -262,15 +282,31 @@ def main():
     _alert("Starting local LTX HDR conversion for: " + os.path.basename(clip_path))
     completed = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = completed.communicate()
+    output = stdout.decode("utf-8", "replace") if hasattr(stdout, "decode") else str(stdout)
+    err_output = stderr.decode("utf-8", "replace") if hasattr(stderr, "decode") else str(stderr)
+    manifest_path = _manifest_path_from_output(output)
+    manifest = None
+    if manifest_path and os.path.exists(manifest_path):
+        manifest = _load_manifest(manifest_path)
 
     if completed.returncode != 0:
-        detail = stderr.decode("utf-8", "replace") if hasattr(stderr, "decode") else str(stderr)
-        _alert("LTX HDR conversion failed. Check the worker log.\n" + detail[-1200:])
+        if manifest:
+            _alert(_format_worker_failure(manifest, manifest_path, err_output or output))
+            return
+        detail = err_output or output
+        if manifest_path:
+            detail = "Worker reported a manifest path, but the file was not found:\n" + manifest_path + "\n\n" + detail
+        _alert("LTX HDR conversion failed before it wrote a readable manifest.\n" + detail[-1200:])
         return
 
-    output = stdout.decode("utf-8", "replace") if hasattr(stdout, "decode") else str(stdout)
-    manifest_path = output.strip().splitlines()[-1]
-    manifest = _load_manifest(manifest_path)
+    if not manifest:
+        _alert("LTX HDR conversion did not return a manifest path.\n" + (output + "\n" + err_output)[-1200:])
+        return
+
+    if manifest.get("status") != "completed":
+        _alert(_format_worker_failure(manifest, manifest_path, err_output or output))
+        return
+
     exr_dir = manifest.get("exr_dir")
     if not exr_dir or not os.path.isdir(exr_dir):
         _alert("Conversion completed but no EXR directory was reported.")

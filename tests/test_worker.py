@@ -1,7 +1,10 @@
 import tempfile
 import unittest
 import json
+import io
 from pathlib import Path
+from contextlib import redirect_stderr, redirect_stdout
+from types import SimpleNamespace
 
 import sys
 
@@ -80,6 +83,51 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(str(exr_dir), result["exr_dir"])
         self.assertEqual(3, result["exr_frame_count"])
         self.assertTrue(result["preview_mp4"].endswith("shot.mp4"))
+
+    def test_convert_validation_failure_emits_manifest_marker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = self.make_config(root)
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config))
+            args = SimpleNamespace(config=str(config_path), input=str(root / "missing.mp4"), clip_name="Missing Shot")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                returncode = ltx_hdr_worker.convert(args)
+
+            self.assertEqual(2, returncode)
+            marker_line = [line for line in stdout.getvalue().splitlines() if line.startswith(ltx_hdr_worker.MANIFEST_MARKER)][0]
+            manifest_path = Path(marker_line[len(ltx_hdr_worker.MANIFEST_MARKER) :])
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual("failed", manifest["status"])
+            self.assertIn("input does not exist", manifest["error"])
+
+    def test_convert_unsupported_ltx_pipeline_emits_manifest_marker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = self.make_config(root)
+            hdr_script = Path(config["ltx_repo_path"]) / "hdr_ic_lora.py"
+            hdr_script.write_text("")
+            config["ltx_hdr_script"] = "hdr_ic_lora.py"
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config))
+            input_path = root / "input.mp4"
+            input_path.write_text("")
+            args = SimpleNamespace(config=str(config_path), input=str(input_path), clip_name="HDR Shot")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                returncode = ltx_hdr_worker.convert(args)
+
+            self.assertEqual(4, returncode)
+            marker_line = [line for line in stdout.getvalue().splitlines() if line.startswith(ltx_hdr_worker.MANIFEST_MARKER)][0]
+            manifest_path = Path(marker_line[len(ltx_hdr_worker.MANIFEST_MARKER) :])
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual("unsupported", manifest["status"])
+            self.assertIn("conversion needs the plugin wrapper implementation", manifest["error"])
 
 
 if __name__ == "__main__":
