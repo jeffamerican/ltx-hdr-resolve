@@ -81,31 +81,53 @@ def validate_config(config):
     return errors
 
 
+def ltx_package_paths(config):
+    repo = Path(config["ltx_repo_path"])
+    paths = []
+    for package in ("ltx-core", "ltx-pipelines", "ltx-trainer"):
+        src = repo / "packages" / package / "src"
+        if src.exists():
+            paths.append(str(src))
+    return paths
+
+
 def build_ltx_command(config, input_path, output_dir):
     script_path = resolve_script_path(config)
     if script_path.name == "hdr_ic_lora.py":
-        raise RuntimeError(
-            "The current LTX-2 repository exposes HDR as a Python pipeline, not the old "
-            "run_hdr_ic_lora.py command-line script. The local runtime is installed, but "
-            "conversion needs the plugin wrapper implementation."
-        )
-
-    command = [
-        config["ltx_python"],
-        str(script_path),
-        "--input",
-        str(input_path),
-        "--output-dir",
-        str(output_dir),
-        "--distilled-checkpoint",
-        config["distilled_checkpoint"],
-        "--upscaler",
-        config["upscaler"],
-        "--lora",
-        config["lora"],
-        "--text-embeddings",
-        config["text_embeddings"],
-    ]
+        command = [
+            config["ltx_python"],
+            "-m",
+            "ltx_pipelines.hdr_ic_lora",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+            "--distilled-checkpoint-path",
+            config["distilled_checkpoint"],
+            "--spatial-upsampler-path",
+            config["upscaler"],
+            "--hdr-lora",
+            config["lora"],
+            "--text-embeddings",
+            config["text_embeddings"],
+        ]
+    else:
+        command = [
+            config["ltx_python"],
+            str(script_path),
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+            "--distilled-checkpoint",
+            config["distilled_checkpoint"],
+            "--upscaler",
+            config["upscaler"],
+            "--lora",
+            config["lora"],
+            "--text-embeddings",
+            config["text_embeddings"],
+        ]
 
     if config.get("exr_half", True):
         command.append("--exr-half")
@@ -113,12 +135,17 @@ def build_ltx_command(config, input_path, output_dir):
         command.append("--high-quality")
     if config.get("skip_mp4"):
         command.append("--skip-mp4")
-    if config.get("no_save_exr"):
+    if config.get("no_save_exr") and script_path.name != "hdr_ic_lora.py":
         command.append("--no-save-exr")
     if config.get("seed") is not None:
         command.extend(["--seed", str(config["seed"])])
     if config.get("max_frames") is not None:
-        command.extend(["--max-frames", str(config["max_frames"])])
+        frame_flag = "--num-frames" if script_path.name == "hdr_ic_lora.py" else "--max-frames"
+        command.extend([frame_flag, str(config["max_frames"])])
+    if script_path.name == "hdr_ic_lora.py" and config.get("spatial_tile") is not None:
+        command.extend(["--spatial-tile", str(config["spatial_tile"])])
+    if script_path.name == "hdr_ic_lora.py" and config.get("offload"):
+        command.extend(["--offload", str(config["offload"])])
 
     return command
 
@@ -248,6 +275,12 @@ def convert(args):
 
     env = os.environ.copy()
     env["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+    package_paths = ltx_package_paths(config)
+    if package_paths:
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            package_paths.append(existing_pythonpath)
+        env["PYTHONPATH"] = os.pathsep.join(package_paths)
     env.update({str(k): str(v) for k, v in config.get("extra_env", {}).items()})
 
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -286,6 +319,11 @@ def convert(args):
         "command": command,
         **outputs,
     }
+    if status != "completed":
+        if completed.returncode == 0:
+            manifest["error"] = "LTX command finished, but no EXR output directory was found."
+        else:
+            manifest["error"] = "LTX command failed with exit code " + str(completed.returncode) + "."
     write_manifest(manifest_path, manifest)
 
     if status != "completed":

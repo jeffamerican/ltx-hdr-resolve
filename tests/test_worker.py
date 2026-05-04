@@ -69,6 +69,27 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("--high-quality", command)
         self.assertEqual(command[-2:], ["--max-frames", "161"])
 
+    def test_build_ltx_command_matches_ltx2_pipeline_flags(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.make_config(Path(temp_dir))
+            hdr_script = Path(config["ltx_repo_path"]) / "packages" / "ltx-pipelines" / "src" / "ltx_pipelines" / "hdr_ic_lora.py"
+            hdr_script.parent.mkdir(parents=True)
+            hdr_script.write_text("")
+            config["ltx_hdr_script"] = "packages/ltx-pipelines/src/ltx_pipelines/hdr_ic_lora.py"
+            config["spatial_tile"] = 768
+            config["offload"] = "cpu"
+
+            command = ltx_hdr_worker.build_ltx_command(config, "/tmp/input.mp4", "/tmp/out")
+
+        self.assertEqual(command[:3], [config["ltx_python"], "-m", "ltx_pipelines.hdr_ic_lora"])
+        self.assertIn("--distilled-checkpoint-path", command)
+        self.assertIn("--spatial-upsampler-path", command)
+        self.assertIn("--hdr-lora", command)
+        self.assertIn("--text-embeddings", command)
+        self.assertIn("--num-frames", command)
+        self.assertIn("--spatial-tile", command)
+        self.assertIn("--offload", command)
+
     def test_find_outputs_discovers_exr_folder_and_frame_count(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -104,30 +125,19 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual("failed", manifest["status"])
             self.assertIn("input does not exist", manifest["error"])
 
-    def test_convert_unsupported_ltx_pipeline_emits_manifest_marker(self):
+    def test_ltx_package_paths_discovers_local_package_sources(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             config = self.make_config(root)
-            hdr_script = Path(config["ltx_repo_path"]) / "hdr_ic_lora.py"
-            hdr_script.write_text("")
-            config["ltx_hdr_script"] = "hdr_ic_lora.py"
-            config_path = root / "config.json"
-            config_path.write_text(json.dumps(config))
-            input_path = root / "input.mp4"
-            input_path.write_text("")
-            args = SimpleNamespace(config=str(config_path), input=str(input_path), clip_name="HDR Shot")
-            stdout = io.StringIO()
-            stderr = io.StringIO()
+            expected = []
+            for package in ("ltx-core", "ltx-pipelines"):
+                source_path = Path(config["ltx_repo_path"]) / "packages" / package / "src"
+                source_path.mkdir(parents=True)
+                expected.append(str(source_path))
 
-            with redirect_stdout(stdout), redirect_stderr(stderr):
-                returncode = ltx_hdr_worker.convert(args)
+            paths = ltx_hdr_worker.ltx_package_paths(config)
 
-            self.assertEqual(4, returncode)
-            marker_line = [line for line in stdout.getvalue().splitlines() if line.startswith(ltx_hdr_worker.MANIFEST_MARKER)][0]
-            manifest_path = Path(marker_line[len(ltx_hdr_worker.MANIFEST_MARKER) :])
-            manifest = json.loads(manifest_path.read_text())
-            self.assertEqual("unsupported", manifest["status"])
-            self.assertIn("conversion needs the plugin wrapper implementation", manifest["error"])
+        self.assertEqual(expected, paths)
 
 
 if __name__ == "__main__":
