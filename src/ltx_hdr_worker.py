@@ -5,10 +5,12 @@ import argparse
 import datetime as dt
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -172,6 +174,7 @@ def find_outputs(input_path, output_dir):
 
 def run_ltx_command(command, cwd, env, log_path):
     emit_status("Launching LTX HDR pipeline")
+    emit_status("EXR frames are usually written near the end; long GPU-only sections can be quiet.")
     with open(log_path, "w", encoding="utf-8") as log:
         log.write("Command:\n")
         log.write(json.dumps(command, indent=2))
@@ -189,20 +192,45 @@ def run_ltx_command(command, cwd, env, log_path):
             **startup_kwargs()
         )
 
+        line_queue = queue.Queue()
+        if process.stdout:
+            reader = threading.Thread(target=read_process_lines, args=(process.stdout, line_queue))
+            reader.daemon = True
+            reader.start()
+        else:
+            line_queue.put(None)
+
+        started = time.monotonic()
         last_update = time.monotonic()
         latest_line = ""
-        if process.stdout:
-            for line in process.stdout:
-                log.write(line)
-                log.flush()
-                cleaned = line.strip()
-                if not cleaned:
-                    continue
-                latest_line = cleaned
+        while True:
+            try:
+                line = line_queue.get(timeout=1)
+            except queue.Empty:
                 now = time.monotonic()
-                if should_forward_ltx_line(cleaned) or now - last_update >= PROGRESS_INTERVAL_SECONDS:
-                    emit_status(cleaned[-300:])
+                if now - last_update >= PROGRESS_INTERVAL_SECONDS:
+                    message = "Still running after " + format_elapsed(now - started)
+                    if latest_line:
+                        message += ". Latest LTX log: " + latest_line[-220:]
+                    else:
+                        message += ". Waiting for first LTX log line."
+                    emit_status(message)
                     last_update = now
+                continue
+
+            if line is None:
+                break
+
+            log.write(line)
+            log.flush()
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            latest_line = cleaned
+            now = time.monotonic()
+            if should_forward_ltx_line(cleaned) or now - last_update >= PROGRESS_INTERVAL_SECONDS:
+                emit_status(cleaned[-300:])
+                last_update = now
 
         returncode = process.wait()
         if returncode == 0:
@@ -269,6 +297,23 @@ def should_forward_ltx_line(line):
         "%|",
     )
     return any(token in lowered for token in interesting)
+
+
+def format_elapsed(seconds):
+    seconds = max(0, int(seconds))
+    minutes, remainder = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return "%dh %02dm %02ds" % (hours, minutes, remainder)
+    return "%dm %02ds" % (minutes, remainder)
+
+
+def read_process_lines(stream, line_queue):
+    try:
+        for line in stream:
+            line_queue.put(line)
+    finally:
+        line_queue.put(None)
 
 
 def make_job_paths(args, config=None):

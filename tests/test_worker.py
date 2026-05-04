@@ -139,6 +139,11 @@ class WorkerTests(unittest.TestCase):
 
         self.assertEqual(expected, paths)
 
+    def test_format_elapsed(self):
+        self.assertEqual("0m 00s", ltx_hdr_worker.format_elapsed(0))
+        self.assertEqual("1m 05s", ltx_hdr_worker.format_elapsed(65))
+        self.assertEqual("1h 01m 05s", ltx_hdr_worker.format_elapsed(3665))
+
 
 if __name__ == "__main__":
     unittest.main()
