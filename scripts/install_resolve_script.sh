@@ -4,6 +4,7 @@ set -euo pipefail
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST_DIR="${HOME}/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility"
 DEST_FILE="${DEST_DIR}/LTX HDR Convert Current Clip.py"
+DEBUG_FILE="${DEST_DIR}/LTX HDR Debug Environment.py"
 PLUGIN_ROOT_JSON="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "${PLUGIN_ROOT}")"
 
 mkdir -p "${DEST_DIR}"
@@ -17,12 +18,35 @@ import sys
 os.environ["LTX_HDR_PLUGIN_ROOT"] = ${PLUGIN_ROOT_JSON}
 sys.path.insert(0, os.path.join(os.environ["LTX_HDR_PLUGIN_ROOT"], "resolve_scripts"))
 
-from ltx_hdr_resolve import main
+import ltx_hdr_resolve
 
-main()
+for name in ("resolve", "fusion", "bmd"):
+    if name in globals():
+        setattr(ltx_hdr_resolve, name, globals()[name])
+
+ltx_hdr_resolve.main()
+PY
+
+cat > "${DEBUG_FILE}" <<PY
+#!/usr/bin/env python3
+
+import os
+import sys
+
+os.environ["LTX_HDR_PLUGIN_ROOT"] = ${PLUGIN_ROOT_JSON}
+sys.path.insert(0, os.path.join(os.environ["LTX_HDR_PLUGIN_ROOT"], "resolve_scripts"))
+
+import ltx_hdr_resolve
+
+for name in ("resolve", "fusion", "bmd"):
+    if name in globals():
+        setattr(ltx_hdr_resolve, name, globals()[name])
+
+ltx_hdr_resolve.debug_environment()
 PY
 
 echo "Installed Resolve script:"
 echo "${DEST_FILE}"
+echo "${DEBUG_FILE}"
 echo
 echo "Restart Resolve, then run Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip"

@@ -13,5 +13,4 @@ for name in ("resolve", "fusion", "bmd"):
     if name in globals():
         setattr(ltx_hdr_resolve, name, globals()[name])
 
-
-ltx_hdr_resolve.main()
+ltx_hdr_resolve.debug_environment()

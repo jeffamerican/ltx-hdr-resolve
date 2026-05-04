@@ -8,6 +8,7 @@ embedded interpreter should only coordinate the job and import the result.
 from __future__ import print_function
 
 import glob
+import importlib
 import json
 import os
 import subprocess
@@ -20,15 +21,89 @@ DEFAULT_CONFIG_PATH = os.path.expanduser("~/.ltx-hdr-resolve/config.json")
 
 
 def _resolve_app():
-    app = globals().get("resolve")
-    if app:
-        return app
+    candidates = [globals()]
+    main_module = sys.modules.get("__main__")
+    if main_module:
+        candidates.append(getattr(main_module, "__dict__", {}))
+
+    for namespace in candidates:
+        app = namespace.get("resolve")
+        if app:
+            return app
+
+        fusion_app = namespace.get("fusion")
+        if fusion_app:
+            try:
+                app = fusion_app.GetResolve()
+                if app:
+                    return app
+            except Exception:
+                pass
+
+        bmd_app = namespace.get("bmd")
+        if bmd_app:
+            try:
+                app = bmd_app.scriptapp("Resolve")
+                if app:
+                    return app
+            except Exception:
+                pass
+
+    for module_name in ("DaVinciResolveScript", "BlackmagicFusion"):
+        try:
+            module = importlib.import_module(module_name)
+            app = module.scriptapp("Resolve")
+            if app:
+                return app
+        except Exception:
+            pass
+
+    script_paths = []
+    if os.name == "nt":
+        program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        script_paths.append(os.path.join(program_data, "Blackmagic Design", "DaVinci Resolve", "Support", "Developer", "Scripting", "Modules"))
+        script_paths.append(os.path.join(program_data, "Blackmagic Design", "DaVinci Resolve", "Developer", "Scripting", "Modules"))
+    else:
+        script_paths.extend(
+            [
+                "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules",
+                "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so",
+            ]
+        )
+
+    for script_path in script_paths:
+        if script_path and os.path.exists(script_path) and script_path not in sys.path:
+            sys.path.append(script_path)
+
     try:
         import DaVinciResolveScript as dvr_script
 
         return dvr_script.scriptapp("Resolve")
     except Exception:
         return None
+
+
+def debug_environment():
+    lines = []
+    lines.append("Python executable: " + sys.executable)
+    lines.append("Python version: " + sys.version.replace("\n", " "))
+    lines.append("PLUGIN_ROOT: " + (PLUGIN_ROOT or "<unset>"))
+    lines.append("sys.path:")
+    for path in sys.path:
+        lines.append("  " + path)
+    for name in ("resolve", "fusion", "bmd"):
+        lines.append(name + " global: " + ("yes" if globals().get(name) else "no"))
+    try:
+        import DaVinciResolveScript as dvr_script
+
+        lines.append("DaVinciResolveScript import: yes")
+        app = dvr_script.scriptapp("Resolve")
+        lines.append("scriptapp('Resolve'): " + ("yes" if app else "no"))
+    except Exception as exc:
+        lines.append("DaVinciResolveScript import/scriptapp error: " + repr(exc))
+    app = _resolve_app()
+    lines.append("_resolve_app(): " + ("yes" if app else "no"))
+    _alert("\n".join(lines))
 
 
 def _alert(message):
@@ -212,6 +287,9 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        if "--debug-env" in sys.argv:
+            debug_environment()
+        else:
+            main()
     except Exception:
         _alert("Unexpected LTX HDR error:\n" + traceback.format_exc())
