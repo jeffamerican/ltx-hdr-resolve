@@ -33,7 +33,7 @@ ltx-hdr-resolve\
   output\      # generated jobs, logs, previews, EXR frames
 ```
 
-The Windows installer writes a conservative first-run config: `max_frames=49`, `high_quality=false`, and `skip_mp4=true`. This is intentional. It should produce an EXR sequence much sooner than the full quality preset. After the pipeline is confirmed working, raise `max_frames` to `161` or set `high_quality=true` in `%USERPROFILE%\.ltx-hdr-resolve\config.json` for longer jobs.
+The Windows installer writes a conservative first-run config: `max_frames=49`, `high_quality=false`, `skip_mp4=true`, `spatial_tile=768`, and `offload=cpu`. This is intentional. It preserves source resolution while reducing memory pressure and should produce an EXR sequence much sooner than the full quality preset. After the pipeline is confirmed working, raise `max_frames` to `161`, set `high_quality=true`, or set `offload=none` in `%USERPROFILE%\.ltx-hdr-resolve\config.json` for longer/faster jobs.
 
 After restarting Resolve, run:
 
@@ -124,7 +124,7 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.
-- Uses a first-run proof preset by default on Windows: 49 frames, high-quality mode off, MP4 preview off.
+- Uses a first-run proof preset by default on Windows: 49 frames, source resolution preserved, high-quality mode off, MP4 preview off, smaller VAE tile, CPU offload.
 - Windows installer downloads the required model files after Hugging Face access is accepted; manual installs must provide local model paths.
 - Does not change project color-management settings automatically yet.
 

@@ -38,6 +38,8 @@ class WorkerTests(unittest.TestCase):
             "high_quality": False,
             "skip_mp4": True,
             "max_frames": 49,
+            "spatial_tile": 768,
+            "offload": "cpu",
         }
         for key in ("distilled_checkpoint", "upscaler", "lora", "text_embeddings"):
             Path(config[key]).write_text("")
@@ -78,9 +80,6 @@ class WorkerTests(unittest.TestCase):
             hdr_script.parent.mkdir(parents=True)
             hdr_script.write_text("")
             config["ltx_hdr_script"] = "packages/ltx-pipelines/src/ltx_pipelines/hdr_ic_lora.py"
-            config["spatial_tile"] = 768
-            config["offload"] = "cpu"
-
             command = ltx_hdr_worker.build_ltx_command(config, "/tmp/input.mp4", "/tmp/out")
 
         self.assertEqual(command[:3], [config["ltx_python"], "-m", "ltx_pipelines.hdr_ic_lora"])
@@ -145,6 +144,12 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual("0m 00s", ltx_hdr_worker.format_elapsed(0))
         self.assertEqual("1m 05s", ltx_hdr_worker.format_elapsed(65))
         self.assertEqual("1h 01m 05s", ltx_hdr_worker.format_elapsed(3665))
+
+    def test_describe_windows_access_violation(self):
+        detail = ltx_hdr_worker.describe_returncode(3221225477)
+
+        self.assertIn("0xC0000005", detail)
+        self.assertIn("access violation", detail)
 
 
 if __name__ == "__main__":

@@ -41,9 +41,11 @@ The installer also writes a conservative first-run render preset:
 max_frames = 49
 high_quality = false
 skip_mp4 = true
+spatial_tile = 768
+offload = cpu
 ```
 
-This is meant to prove the pipeline and create EXRs quickly. A 1080p clip with `max_frames=161` and `high_quality=true` expands to 321 internal frames and can run for a long time before any EXR files appear.
+This is meant to prove the pipeline and create EXRs quickly while preserving source resolution. A 1080p clip with `max_frames=161` and `high_quality=true` expands to 321 internal frames and can run for a long time before any EXR files appear. `spatial_tile=768` and `offload=cpu` reduce memory pressure without downscaling the footage; they may make the first successful run slower.
 
 If those files are not present yet, the installer prints the exact missing paths and exits cleanly. It does not reuse stale paths from an older config.
 

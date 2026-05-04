@@ -19,6 +19,13 @@ MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 LOG_MARKER = "LTX_HDR_LOG="
 STATUS_MARKER = "LTX_HDR_STATUS="
 PROGRESS_INTERVAL_SECONDS = 10
+WINDOWS_EXIT_CODES = {
+    0xC0000005: "Windows native access violation (0xC0000005)",
+    0xC000001D: "Windows illegal instruction crash (0xC000001D)",
+    0xC0000135: "Windows missing DLL crash (0xC0000135)",
+    0xC000007B: "Windows invalid image/DLL architecture crash (0xC000007B)",
+    0xC0000409: "Windows stack buffer overrun crash (0xC0000409)",
+}
 REQUIRED_CONFIG_KEYS = (
     "ltx_repo_path",
     "ltx_python",
@@ -156,6 +163,18 @@ def build_ltx_command(config, input_path, output_dir):
     return command
 
 
+def describe_returncode(returncode):
+    if returncode == 0:
+        return "completed successfully"
+    if os.name == "nt" or returncode > 255 or returncode < 0:
+        unsigned = returncode & 0xFFFFFFFF
+        reason = WINDOWS_EXIT_CODES.get(unsigned)
+        if reason:
+            return reason + ". A native dependency crashed before Python could raise an exception. This is commonly caused by CUDA/PyTorch/video-driver memory pressure or an incompatible native runtime."
+        return "Windows native process exit 0x%08X (%d)" % (unsigned, returncode)
+    return "process exit code " + str(returncode)
+
+
 def find_outputs(input_path, output_dir):
     stem = Path(input_path).stem
     expected_exr = Path(output_dir) / (stem + "_exr")
@@ -236,7 +255,7 @@ def run_ltx_command(command, cwd, env, log_path):
         if returncode == 0:
             emit_status("LTX HDR pipeline finished; checking generated EXR output")
         else:
-            message = "LTX HDR pipeline exited with code " + str(returncode)
+            message = "LTX HDR pipeline exited: " + describe_returncode(returncode)
             if latest_line:
                 message += ". Latest log: " + latest_line[-220:]
             emit_status(message)
@@ -409,6 +428,10 @@ def convert(args):
         emit_status("Configured for " + str(frame_count) + " output frames.")
     if config.get("skip_mp4"):
         emit_status("MP4 preview encoding is disabled; Resolve will import the generated EXR sequence.")
+    if config.get("spatial_tile") is not None:
+        emit_status("Using spatial tile " + str(config.get("spatial_tile")) + " to reduce GPU memory pressure without changing output resolution.")
+    if config.get("offload"):
+        emit_status("Using LTX offload mode: " + str(config.get("offload")) + ". This preserves quality but can be slower.")
 
     try:
         command = build_ltx_command(config, input_path, output_dir)
@@ -423,6 +446,8 @@ def convert(args):
 
     env = os.environ.copy()
     env["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     package_paths = ltx_package_paths(config)
     if package_paths:
         existing_pythonpath = env.get("PYTHONPATH", "")
@@ -456,10 +481,11 @@ def convert(args):
         **outputs,
     }
     if status != "completed":
+        manifest["returncode_detail"] = describe_returncode(returncode)
         if returncode == 0:
             manifest["error"] = "LTX command finished, but no EXR output directory was found."
         else:
-            manifest["error"] = "LTX command failed with exit code " + str(returncode) + "."
+            manifest["error"] = "LTX command failed: " + describe_returncode(returncode) + "."
     write_manifest(manifest_path, manifest)
 
     if status != "completed":

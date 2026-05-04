@@ -383,6 +383,8 @@ try {
     no_save_exr = $false
     seed = 10
     max_frames = 49
+    spatial_tile = 768
+    offload = "cpu"
     extra_env = @{}
   }
 
