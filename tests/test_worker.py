@@ -35,8 +35,9 @@ class WorkerTests(unittest.TestCase):
             "lora": str(models / "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors"),
             "text_embeddings": str(models / "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"),
             "exr_half": True,
-            "high_quality": True,
-            "max_frames": 161,
+            "high_quality": False,
+            "skip_mp4": True,
+            "max_frames": 49,
         }
         for key in ("distilled_checkpoint", "upscaler", "lora", "text_embeddings"):
             Path(config[key]).write_text("")
@@ -66,8 +67,9 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("--lora", command)
         self.assertIn("--text-embeddings", command)
         self.assertIn("--exr-half", command)
-        self.assertIn("--high-quality", command)
-        self.assertEqual(command[-2:], ["--max-frames", "161"])
+        self.assertNotIn("--high-quality", command)
+        self.assertIn("--skip-mp4", command)
+        self.assertEqual(command[-2:], ["--max-frames", "49"])
 
     def test_build_ltx_command_matches_ltx2_pipeline_flags(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -378,11 +378,11 @@ try {
     lora = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-0.9.safetensors"
     text_embeddings = Join-Path $modelDir "ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors"
     exr_half = $true
-    high_quality = $true
-    skip_mp4 = $false
+    high_quality = $false
+    skip_mp4 = $true
     no_save_exr = $false
     seed = 10
-    max_frames = 161
+    max_frames = 49
     extra_env = @{}
   }
 

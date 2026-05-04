@@ -35,6 +35,16 @@ The default folders are:
 .\output
 ```
 
+The installer also writes a conservative first-run render preset:
+
+```text
+max_frames = 49
+high_quality = false
+skip_mp4 = true
+```
+
+This is meant to prove the pipeline and create EXRs quickly. A 1080p clip with `max_frames=161` and `high_quality=true` expands to 321 internal frames and can run for a long time before any EXR files appear.
+
 If those files are not present yet, the installer prints the exact missing paths and exits cleanly. It does not reuse stale paths from an older config.
 
 Manual equivalent from this repository:

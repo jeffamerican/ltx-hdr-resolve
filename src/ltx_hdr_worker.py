@@ -137,7 +137,7 @@ def build_ltx_command(config, input_path, output_dir):
 
     if config.get("exr_half", True):
         command.append("--exr-half")
-    if config.get("high_quality", True):
+    if config.get("high_quality", False):
         command.append("--high-quality")
     if config.get("skip_mp4"):
         command.append("--skip-mp4")
@@ -402,6 +402,13 @@ def convert(args):
     output_dir.mkdir(parents=True, exist_ok=True)
     emit_log(log_path)
     emit_status("Job folder: " + str(job_dir))
+    frame_count = int(config.get("max_frames") or 161)
+    if config.get("high_quality", False):
+        emit_status("Configured for " + str(frame_count) + " output frames; high-quality mode expands this to " + str(2 * frame_count - 1) + " internal frames.")
+    else:
+        emit_status("Configured for " + str(frame_count) + " output frames.")
+    if config.get("skip_mp4"):
+        emit_status("MP4 preview encoding is disabled; Resolve will import the generated EXR sequence.")
 
     try:
         command = build_ltx_command(config, input_path, output_dir)
