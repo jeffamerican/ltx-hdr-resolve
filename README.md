@@ -121,8 +121,8 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 - Processes the current timeline clip's source file, not only the timeline-trimmed range.
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
-- Writes job manifests and logs under the configured output directory.
-- Does not download models automatically.
+- Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.
+- Windows installer downloads the required model files after Hugging Face access is accepted; manual installs must provide local model paths.
 - Does not change project color-management settings automatically yet.
 
 ## Recommended Resolve color settings

@@ -9,10 +9,14 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
+LOG_MARKER = "LTX_HDR_LOG="
+STATUS_MARKER = "LTX_HDR_STATUS="
+PROGRESS_INTERVAL_SECONDS = 10
 REQUIRED_CONFIG_KEYS = (
     "ltx_repo_path",
     "ltx_python",
@@ -166,6 +170,51 @@ def find_outputs(input_path, output_dir):
     }
 
 
+def run_ltx_command(command, cwd, env, log_path):
+    emit_status("Launching LTX HDR pipeline")
+    with open(log_path, "w", encoding="utf-8") as log:
+        log.write("Command:\n")
+        log.write(json.dumps(command, indent=2))
+        log.write("\n\n")
+        log.flush()
+
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+            **startup_kwargs()
+        )
+
+        last_update = time.monotonic()
+        latest_line = ""
+        if process.stdout:
+            for line in process.stdout:
+                log.write(line)
+                log.flush()
+                cleaned = line.strip()
+                if not cleaned:
+                    continue
+                latest_line = cleaned
+                now = time.monotonic()
+                if should_forward_ltx_line(cleaned) or now - last_update >= PROGRESS_INTERVAL_SECONDS:
+                    emit_status(cleaned[-300:])
+                    last_update = now
+
+        returncode = process.wait()
+        if returncode == 0:
+            emit_status("LTX HDR pipeline finished; checking generated EXR output")
+        else:
+            message = "LTX HDR pipeline exited with code " + str(returncode)
+            if latest_line:
+                message += ". Latest log: " + latest_line[-220:]
+            emit_status(message)
+        return returncode
+
+
 def write_manifest(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as handle:
@@ -174,7 +223,52 @@ def write_manifest(path, payload):
 
 
 def emit_manifest(path):
-    print(MANIFEST_MARKER + str(path))
+    print(MANIFEST_MARKER + str(path), flush=True)
+
+
+def emit_log(path):
+    print(LOG_MARKER + str(path), flush=True)
+
+
+def emit_status(message):
+    print(STATUS_MARKER + str(message).replace("\r", " ").replace("\n", " ").strip(), flush=True)
+
+
+def startup_kwargs():
+    if os.name != "nt":
+        return {}
+
+    kwargs = {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creationflags:
+        kwargs["creationflags"] = creationflags
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs["startupinfo"] = startupinfo
+    except Exception:
+        pass
+    return kwargs
+
+
+def should_forward_ltx_line(line):
+    lowered = line.lower()
+    interesting = (
+        "found ",
+        "loading",
+        "pipeline",
+        "generating",
+        "encoding",
+        "waiting",
+        "all inference",
+        "total wall time",
+        "error",
+        "failed",
+        "traceback",
+        "%|",
+    )
+    return any(token in lowered for token in interesting)
 
 
 def make_job_paths(args, config=None):
@@ -261,6 +355,8 @@ def convert(args):
 
     job_dir, output_dir, log_path, manifest_path = make_job_paths(args, config)
     output_dir.mkdir(parents=True, exist_ok=True)
+    emit_log(log_path)
+    emit_status("Job folder: " + str(job_dir))
 
     try:
         command = build_ltx_command(config, input_path, output_dir)
@@ -285,19 +381,7 @@ def convert(args):
 
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     try:
-        with open(log_path, "w") as log:
-            log.write("Command:\n")
-            log.write(json.dumps(command, indent=2))
-            log.write("\n\n")
-            log.flush()
-            completed = subprocess.run(
-                command,
-                cwd=config["ltx_repo_path"],
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-            )
+        returncode = run_ltx_command(command, config["ltx_repo_path"], env, log_path)
     except Exception as exc:
         message = "Could not run LTX HDR command: " + str(exc)
         print(message, file=sys.stderr)
@@ -305,12 +389,12 @@ def convert(args):
         return 3
 
     outputs = find_outputs(input_path, output_dir)
-    status = "completed" if completed.returncode == 0 and outputs["exr_dir"] else "failed"
+    status = "completed" if returncode == 0 and outputs["exr_dir"] else "failed"
     manifest = {
         "status": status,
         "started_at": started_at,
         "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "input": str(input_path),
         "clip_name": args.clip_name,
         "job_dir": str(job_dir),
@@ -320,10 +404,10 @@ def convert(args):
         **outputs,
     }
     if status != "completed":
-        if completed.returncode == 0:
+        if returncode == 0:
             manifest["error"] = "LTX command finished, but no EXR output directory was found."
         else:
-            manifest["error"] = "LTX command failed with exit code " + str(completed.returncode) + "."
+            manifest["error"] = "LTX command failed with exit code " + str(returncode) + "."
     write_manifest(manifest_path, manifest)
 
     if status != "completed":

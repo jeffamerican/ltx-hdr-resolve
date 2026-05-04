@@ -18,6 +18,9 @@ import traceback
 
 PLUGIN_ROOT = os.environ.get("LTX_HDR_PLUGIN_ROOT", "")
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.ltx-hdr-resolve/config.json")
+LOG_MARKER = "LTX_HDR_LOG="
+MANIFEST_MARKER = "LTX_HDR_MANIFEST="
+STATUS_MARKER = "LTX_HDR_STATUS="
 
 
 def _resolve_app():
@@ -88,6 +91,14 @@ def debug_environment():
     lines.append("Python executable: " + sys.executable)
     lines.append("Python version: " + sys.version.replace("\n", " "))
     lines.append("PLUGIN_ROOT: " + (PLUGIN_ROOT or "<unset>"))
+    config_path = os.environ.get("LTX_HDR_CONFIG", DEFAULT_CONFIG_PATH)
+    lines.append("Config path: " + config_path)
+    if os.path.exists(config_path):
+        try:
+            config = _load_config(config_path)
+            lines.append("Configured LTX Python: " + str(config.get("ltx_python", "<missing>")))
+        except Exception as exc:
+            lines.append("Config load error: " + repr(exc))
     lines.append("sys.path:")
     for path in sys.path:
         lines.append("  " + path)
@@ -118,6 +129,10 @@ def _alert(message):
         pass
 
 
+def _log(message):
+    print("[LTX HDR] " + message)
+
+
 def _clip_file_path(media_pool_item):
     props = media_pool_item.GetClipProperty() or {}
     for key in ("File Path", "FilePath", "Path", "Source File", "SourceFile"):
@@ -134,18 +149,33 @@ def _worker_path():
     return os.path.join(root, "src", "ltx_hdr_worker.py")
 
 
+def _load_config(config_path):
+    with open(config_path, "r", encoding="utf-8-sig") as handle:
+        return json.load(handle)
+
+
 def _load_manifest(manifest_path):
     with open(manifest_path, "r") as handle:
         return json.load(handle)
 
 
 def _manifest_path_from_output(output):
-    marker = "LTX_HDR_MANIFEST="
     for line in output.splitlines():
         line = line.strip()
-        if line.startswith(marker):
-            return line[len(marker) :].strip()
+        if line.startswith(MANIFEST_MARKER):
+            return line[len(MANIFEST_MARKER) :].strip()
     return ""
+
+
+def _parse_worker_line(line):
+    line = line.strip()
+    if line.startswith(MANIFEST_MARKER):
+        return "manifest", line[len(MANIFEST_MARKER) :].strip()
+    if line.startswith(LOG_MARKER):
+        return "log", line[len(LOG_MARKER) :].strip()
+    if line.startswith(STATUS_MARKER):
+        return "status", line[len(STATUS_MARKER) :].strip()
+    return "output", line
 
 
 def _format_worker_failure(manifest, manifest_path, fallback):
@@ -157,6 +187,26 @@ def _format_worker_failure(manifest, manifest_path, fallback):
     if manifest_path:
         message += "\nManifest: " + manifest_path
     return message
+
+
+def _worker_startup_kwargs():
+    if os.name != "nt":
+        return {}
+
+    kwargs = {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creationflags:
+        kwargs["creationflags"] = creationflags
+
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        kwargs["startupinfo"] = startupinfo
+    except Exception:
+        pass
+
+    return kwargs
 
 
 def _find_exr_sequence(exr_dir):
@@ -267,8 +317,22 @@ def main():
         _alert("Missing config: " + config_path)
         return
 
+    try:
+        config = _load_config(config_path)
+    except Exception as exc:
+        _alert("Could not read config: " + config_path + "\n" + str(exc))
+        return
+
+    worker_python = config.get("ltx_python") or ""
+    if not worker_python:
+        _alert("Config is missing ltx_python: " + config_path)
+        return
+    if not os.path.exists(worker_python):
+        _alert("Configured LTX Python was not found:\n" + worker_python + "\n\nRun Install-Windows.cmd again.")
+        return
+
     command = [
-        sys.executable,
+        worker_python,
         worker,
         "convert",
         "--config",
@@ -279,12 +343,39 @@ def main():
         current_item.GetName() or media_pool_item.GetName() or "clip",
     ]
 
-    _alert("Starting local LTX HDR conversion for: " + os.path.basename(clip_path))
-    completed = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = completed.communicate()
-    output = stdout.decode("utf-8", "replace") if hasattr(stdout, "decode") else str(stdout)
-    err_output = stderr.decode("utf-8", "replace") if hasattr(stderr, "decode") else str(stderr)
-    manifest_path = _manifest_path_from_output(output)
+    _log("Starting local LTX HDR conversion for: " + os.path.basename(clip_path))
+    _log("Using LTX Python: " + worker_python)
+    completed = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+        **_worker_startup_kwargs()
+    )
+
+    output_lines = []
+    manifest_path = ""
+    log_path = ""
+    if completed.stdout:
+        for line in completed.stdout:
+            output_lines.append(line)
+            kind, value = _parse_worker_line(line)
+            if kind == "manifest":
+                manifest_path = value
+            elif kind == "log":
+                log_path = value
+                _log("Worker log: " + value)
+            elif kind == "status" and value:
+                _log(value)
+            elif value:
+                _log(value)
+
+    completed.wait()
+    output = "".join(output_lines)
+    err_output = ""
+    if not manifest_path:
+        manifest_path = _manifest_path_from_output(output)
     manifest = None
     if manifest_path and os.path.exists(manifest_path):
         manifest = _load_manifest(manifest_path)
@@ -296,11 +387,16 @@ def main():
         detail = err_output or output
         if manifest_path:
             detail = "Worker reported a manifest path, but the file was not found:\n" + manifest_path + "\n\n" + detail
+        if log_path:
+            detail += "\n\nLog: " + log_path
         _alert("LTX HDR conversion failed before it wrote a readable manifest.\n" + detail[-1200:])
         return
 
     if not manifest:
-        _alert("LTX HDR conversion did not return a manifest path.\n" + (output + "\n" + err_output)[-1200:])
+        detail = output + "\n" + err_output
+        if log_path:
+            detail += "\n\nLog: " + log_path
+        _alert("LTX HDR conversion did not return a manifest path.\n" + detail[-1200:])
         return
 
     if manifest.get("status") != "completed":
