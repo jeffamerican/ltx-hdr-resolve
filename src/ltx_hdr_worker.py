@@ -4,6 +4,7 @@
 import argparse
 import datetime as dt
 import json
+import mimetypes
 import os
 import queue
 import re
@@ -12,6 +13,10 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
 from pathlib import Path
 
 
@@ -19,6 +24,10 @@ MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 LOG_MARKER = "LTX_HDR_LOG="
 STATUS_MARKER = "LTX_HDR_STATUS="
 PROGRESS_INTERVAL_SECONDS = 10
+LTX_API_BASE_URL = "https://api.ltx.video"
+DEFAULT_CLOUD_POLL_SECONDS = 5
+DEFAULT_CLOUD_TIMEOUT_SECONDS = 1800
+DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 100
 WINDOWS_EXIT_CODES = {
     0xC0000005: "Windows native access violation (0xC0000005)",
     0xC000001D: "Windows illegal instruction crash (0xC000001D)",
@@ -36,6 +45,11 @@ REQUIRED_CONFIG_KEYS = (
     "lora",
     "text_embeddings",
 )
+LOCAL_REQUIRED_CONFIG_KEYS = REQUIRED_CONFIG_KEYS
+CLOUD_REQUIRED_CONFIG_KEYS = (
+    "output_root",
+    "ltx_python",
+)
 
 
 def load_config(path):
@@ -49,6 +63,10 @@ def sanitize_name(value):
     return safe or "clip"
 
 
+def run_mode(config):
+    return str(config.get("mode") or "local").lower().strip()
+
+
 def resolve_script_path(config):
     script = Path(config["ltx_hdr_script"])
     if script.is_absolute():
@@ -58,26 +76,31 @@ def resolve_script_path(config):
 
 def validate_config(config):
     errors = []
-    for key in REQUIRED_CONFIG_KEYS:
+    mode = run_mode(config)
+    required_keys = CLOUD_REQUIRED_CONFIG_KEYS if mode == "ltx_cloud" else LOCAL_REQUIRED_CONFIG_KEYS
+    for key in required_keys:
         if not config.get(key):
             errors.append("Missing config key: " + key)
 
-    path_keys = (
-        "ltx_repo_path",
-        "ltx_python",
-        "distilled_checkpoint",
-        "upscaler",
-        "lora",
-        "text_embeddings",
-    )
+    path_keys = ("ltx_python",)
+    if mode != "ltx_cloud":
+        path_keys = (
+            "ltx_repo_path",
+            "ltx_python",
+            "distilled_checkpoint",
+            "upscaler",
+            "lora",
+            "text_embeddings",
+        )
     for key in path_keys:
         value = config.get(key)
         if value and not Path(value).exists():
             errors.append(key + " does not exist: " + value)
 
-    script = resolve_script_path(config) if config.get("ltx_hdr_script") and config.get("ltx_repo_path") else None
-    if script and not script.exists():
-        errors.append("ltx_hdr_script does not exist: " + str(script))
+    if mode != "ltx_cloud":
+        script = resolve_script_path(config) if config.get("ltx_hdr_script") and config.get("ltx_repo_path") else None
+        if script and not script.exists():
+            errors.append("ltx_hdr_script does not exist: " + str(script))
 
     max_frames = config.get("max_frames")
     if max_frames is not None:
@@ -173,6 +196,191 @@ def describe_returncode(returncode):
             return reason + ". A native dependency crashed before Python could raise an exception. This is commonly caused by CUDA/PyTorch/video-driver memory pressure or an incompatible native runtime."
         return "Windows native process exit 0x%08X (%d)" % (unsigned, returncode)
     return "process exit code " + str(returncode)
+
+
+def default_secrets_path():
+    return Path.home() / ".ltx-hdr-resolve" / "secrets.json"
+
+
+def load_ltx_api_key(config):
+    env_key = (os.environ.get("LTX_API_KEY") or os.environ.get("LTXV_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+
+    config_key = str(config.get("ltx_api_key") or "").strip()
+    if config_key:
+        return config_key
+
+    secrets_path = Path(config.get("cloud_api_key_path") or default_secrets_path())
+    if secrets_path.exists():
+        with open(secrets_path, "r", encoding="utf-8-sig") as handle:
+            secrets = json.load(handle)
+        key = str(secrets.get("ltx_api_key") or "").strip()
+        if key:
+            return key
+
+    raise RuntimeError(
+        "Missing LTX API key. Run Set-LTX-Api-Key.cmd or set LTX_API_KEY, then try again."
+    )
+
+
+def ltx_api_headers(api_key, content_type="application/json"):
+    headers = {"Authorization": "Bearer " + api_key}
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
+
+
+def ltx_request_json(method, url, api_key, payload=None, extra_headers=None):
+    body = None
+    headers = ltx_api_headers(api_key)
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+    if extra_headers:
+        headers.update(extra_headers)
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError("LTX API HTTP " + str(exc.code) + ": " + detail[:1000]) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError("Could not reach LTX API: " + str(exc)) from exc
+
+    if not raw:
+        return {}
+    return json.loads(raw.decode("utf-8"))
+
+
+def first_present(mapping, names, default=""):
+    for name in names:
+        value = mapping.get(name)
+        if value:
+            return value
+    return default
+
+
+def create_ltx_upload(api_key, file_path):
+    file_name = Path(file_path).name
+    content_type = mimetypes.guess_type(file_name)[0] or "video/mp4"
+    data = ltx_request_json("POST", LTX_API_BASE_URL + "/v1/upload", api_key)
+    upload_url = first_present(data, ("upload_url", "uploadUrl", "url", "signed_url", "signedUrl"))
+    storage_uri = first_present(data, ("storage_uri", "storageUri", "file_url", "fileUrl", "uri"))
+    required_headers = data.get("required_headers") or data.get("requiredHeaders") or {}
+    if not upload_url:
+        raise RuntimeError("LTX upload response did not include an upload URL.")
+    if not storage_uri:
+        raise RuntimeError("LTX upload response did not include a storage URI.")
+    return upload_url, storage_uri, content_type, required_headers
+
+
+def upload_file_to_signed_url(upload_url, file_path, content_type, required_headers):
+    headers = {"Content-Type": content_type}
+    headers.update({str(k): str(v) for k, v in required_headers.items()})
+    with open(file_path, "rb") as handle:
+        request = urllib.request.Request(upload_url, data=handle.read(), headers=headers, method="PUT")
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError("LTX upload HTTP " + str(exc.code) + ": " + detail[:1000]) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError("Could not upload video to LTX: " + str(exc)) from exc
+
+
+def cloud_job_status(data):
+    return str(first_present(data, ("status", "state", "job_status", "jobStatus"), "")).lower()
+
+
+def cloud_job_id(data):
+    return str(first_present(data, ("id", "job_id", "jobId", "request_id", "requestId"), ""))
+
+
+def submit_ltx_hdr_job(config, api_key, storage_uri):
+    payload = {
+        "video_uri": storage_uri,
+    }
+    if config.get("seed") is not None:
+        payload["seed"] = int(config["seed"])
+    data = ltx_request_json("POST", LTX_API_BASE_URL + "/v2/video-to-video-hdr", api_key, payload)
+    job_id = cloud_job_id(data)
+    if not job_id:
+        job_id = first_present(data.get("job", {}) if isinstance(data.get("job"), dict) else {}, ("id", "job_id", "jobId"), "")
+    if not job_id:
+        raise RuntimeError("LTX HDR response did not include a job id.")
+    return job_id, data
+
+
+def poll_ltx_job(config, api_key, job_id):
+    poll_seconds = int(config.get("cloud_poll_seconds") or DEFAULT_CLOUD_POLL_SECONDS)
+    timeout_seconds = int(config.get("cloud_timeout_seconds") or DEFAULT_CLOUD_TIMEOUT_SECONDS)
+    started = time.monotonic()
+    status_url = LTX_API_BASE_URL + "/v2/video-to-video-hdr/" + urllib.parse.quote(job_id)
+    while True:
+        data = ltx_request_json("GET", status_url, api_key)
+        status = cloud_job_status(data)
+        if status in ("completed", "succeeded", "success", "done"):
+            return data
+        if status in ("failed", "error", "cancelled", "canceled"):
+            raise RuntimeError("LTX HDR job failed: " + json.dumps(data, sort_keys=True)[:1500])
+        if time.monotonic() - started > timeout_seconds:
+            raise RuntimeError("Timed out waiting for LTX HDR job " + job_id + ".")
+        emit_status("LTX cloud job " + job_id + " is " + (status or "running") + " after " + format_elapsed(time.monotonic() - started))
+        time.sleep(poll_seconds)
+
+
+def find_cloud_result_url(job_data):
+    candidates = [
+        job_data,
+        job_data.get("output", {}) if isinstance(job_data.get("output"), dict) else {},
+        job_data.get("result", {}) if isinstance(job_data.get("result"), dict) else {},
+        job_data.get("data", {}) if isinstance(job_data.get("data"), dict) else {},
+    ]
+    for candidate in candidates:
+        value = first_present(
+            candidate,
+            ("exr_frames_url", "exrFramesUrl", "exr_zip_url", "exrZipUrl", "url", "output_url", "outputUrl"),
+        )
+        if value:
+            return value
+    raise RuntimeError("Completed LTX HDR job did not include an EXR frames URL.")
+
+
+def safe_extract_zip(zip_path, destination):
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        for member in archive.infolist():
+            name = member.filename.replace("\\", "/")
+            if not name or name.endswith("/"):
+                continue
+            target = destination / Path(name).name
+            if Path(name).suffix.lower() != ".exr":
+                continue
+            with archive.open(member) as source, open(target, "wb") as output:
+                output.write(source.read())
+
+
+def download_cloud_exrs(url, api_key, output_dir, input_path):
+    zip_path = Path(output_dir) / (Path(input_path).stem + "_ltx_hdr_exr.zip")
+    exr_dir = Path(output_dir) / (Path(input_path).stem + "_exr")
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response, open(zip_path, "wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError("LTX EXR download HTTP " + str(exc.code) + ": " + detail[:1000]) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError("Could not download LTX EXR frames: " + str(exc)) from exc
+    safe_extract_zip(zip_path, exr_dir)
+    return zip_path, exr_dir
 
 
 def find_outputs(input_path, output_dir):
@@ -382,6 +590,77 @@ def write_failure_manifest(args, config, returncode, error, status="failed", err
     return manifest_path
 
 
+def convert_cloud(args, config, input_path, job_paths):
+    job_dir, output_dir, log_path, manifest_path = job_paths
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    api_key = load_ltx_api_key(config)
+    upload_limit_mb = int(config.get("cloud_upload_limit_mb") or DEFAULT_CLOUD_UPLOAD_LIMIT_MB)
+    input_size_mb = input_path.stat().st_size / (1024 * 1024)
+    if input_size_mb > upload_limit_mb:
+        raise RuntimeError(
+            "Input file is %.1f MB, above the configured LTX upload limit of %d MB. "
+            "Use a shorter exported clip/segment or raise cloud_upload_limit_mb if your LTX plan supports it."
+            % (input_size_mb, upload_limit_mb)
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    emit_status("Running in LTX cloud mode.")
+    emit_status("Uploading source clip to LTX (" + ("%.1f" % input_size_mb) + " MB).")
+    with open(log_path, "w", encoding="utf-8") as log:
+        log.write("Cloud mode: LTX API\n")
+        log.write("Input: " + str(input_path) + "\n")
+        log.write("Output: " + str(output_dir) + "\n\n")
+        log.flush()
+
+        upload_url, storage_uri, content_type, required_headers = create_ltx_upload(api_key, input_path)
+        log.write("Upload storage URI: " + storage_uri + "\n")
+        log.flush()
+        upload_file_to_signed_url(upload_url, input_path, content_type, required_headers)
+        emit_status("Upload complete. Submitting LTX HDR cloud job.")
+
+        job_id, submit_response = submit_ltx_hdr_job(config, api_key, storage_uri)
+        log.write("Submit response:\n")
+        log.write(json.dumps(submit_response, indent=2, sort_keys=True))
+        log.write("\n\n")
+        log.flush()
+        emit_status("Submitted LTX cloud job: " + job_id)
+
+        job_data = poll_ltx_job(config, api_key, job_id)
+        log.write("Completed job response:\n")
+        log.write(json.dumps(job_data, indent=2, sort_keys=True))
+        log.write("\n\n")
+        log.flush()
+
+        result_url = find_cloud_result_url(job_data)
+        emit_status("Downloading LTX HDR EXR frames.")
+        zip_path, exr_dir = download_cloud_exrs(result_url, api_key, output_dir, input_path)
+        frame_count = len(list(Path(exr_dir).glob("*.exr")))
+        if frame_count < 1:
+            raise RuntimeError("LTX cloud job completed, but the downloaded EXR ZIP contained no EXR frames.")
+
+        manifest = {
+            "status": "completed",
+            "mode": "ltx_cloud",
+            "started_at": started_at,
+            "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "returncode": 0,
+            "input": str(input_path),
+            "clip_name": args.clip_name,
+            "job_dir": str(job_dir),
+            "output_dir": str(output_dir),
+            "log_path": str(log_path),
+            "ltx_job_id": job_id,
+            "exr_zip": str(zip_path),
+            "exr_dir": str(exr_dir),
+            "preview_mp4": "",
+            "exr_frame_count": frame_count,
+        }
+        write_manifest(manifest_path, manifest)
+        emit_status("Downloaded " + str(frame_count) + " EXR frames from LTX cloud.")
+        emit_manifest(manifest_path)
+        return 0
+
+
 def diagnose(args):
     config = load_config(args.config)
     errors = validate_config(config)
@@ -391,9 +670,18 @@ def diagnose(args):
         return 1
 
     print("OK: config is valid")
-    print("LTX repo: " + config["ltx_repo_path"])
+    print("Mode: " + run_mode(config))
+    if run_mode(config) == "ltx_cloud":
+        try:
+            load_ltx_api_key(config)
+            print("LTX API key: configured")
+        except Exception as exc:
+            print("LTX API key: " + str(exc))
+            return 1
+    else:
+        print("LTX repo: " + config["ltx_repo_path"])
+        print("LTX HDR script: " + str(resolve_script_path(config)))
     print("LTX python: " + config["ltx_python"])
-    print("LTX HDR script: " + str(resolve_script_path(config)))
     print("Output root: " + config["output_root"])
     return 0
 
@@ -432,6 +720,15 @@ def convert(args):
         emit_status("Using spatial tile " + str(config.get("spatial_tile")) + " to reduce GPU memory pressure without changing output resolution.")
     if config.get("offload"):
         emit_status("Using LTX offload mode: " + str(config.get("offload")) + ". This preserves quality but can be slower.")
+
+    if run_mode(config) == "ltx_cloud":
+        try:
+            return convert_cloud(args, config, input_path, (job_dir, output_dir, log_path, manifest_path))
+        except Exception as exc:
+            message = "LTX cloud conversion failed: " + str(exc)
+            print(message, file=sys.stderr)
+            write_failure_manifest(args, config, 3, message, command=["ltx_cloud"], job_paths=(job_dir, output_dir, log_path, manifest_path))
+            return 3
 
     try:
         command = build_ltx_command(config, input_path, output_dir)

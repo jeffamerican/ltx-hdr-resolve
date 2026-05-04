@@ -1,7 +1,9 @@
 param(
   [switch]$AllUsers,
   [switch]$CustomPaths,
-  [switch]$NoPause
+  [switch]$NoPause,
+  [ValidateSet("Cloud", "Local")]
+  [string]$Mode = "Cloud"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +12,9 @@ $HfBaseModelUrl = "https://huggingface.co/Lightricks/LTX-2.3"
 $HfHdrModelUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR"
 $HfHdrFilesUrl = "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main"
 $HfTokenUrl = "https://huggingface.co/settings/tokens/new?tokenType=read"
+$LtxApiKeyUrl = "https://app.ltx.video/"
 $MinimumFreeGb = 120
+$MinimumCloudFreeGb = 10
 
 function Write-Step {
   param([string]$Message)
@@ -138,6 +142,87 @@ function Write-LtxConfig {
   $json = $Config | ConvertTo-Json -Depth 5
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+function Write-LtxSecrets {
+  param(
+    [string]$Path,
+    [string]$ApiKey
+  )
+
+  $secrets = [ordered]@{
+    ltx_api_key = $ApiKey
+  }
+  $json = $secrets | ConvertTo-Json -Depth 5
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+function Get-LtxApiKey {
+  param(
+    [string]$SecretsPath
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($env:LTX_API_KEY)) {
+    Write-Ok "Using LTX API key from LTX_API_KEY environment variable"
+    return $env:LTX_API_KEY.Trim()
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:LTXV_API_KEY)) {
+    Write-Ok "Using LTX API key from LTXV_API_KEY environment variable"
+    return $env:LTXV_API_KEY.Trim()
+  }
+
+  if (Test-Path $SecretsPath) {
+    try {
+      $existing = Get-Content -Raw -Path $SecretsPath | ConvertFrom-Json
+      if (-not [string]::IsNullOrWhiteSpace($existing.ltx_api_key)) {
+        Write-Ok "Existing LTX API key found: $SecretsPath"
+        $change = Read-Host "Change the saved LTX API key now? [y/N]"
+        if ([string]::IsNullOrWhiteSpace($change) -or -not $change.ToLowerInvariant().StartsWith("y")) {
+          return $existing.ltx_api_key.Trim()
+        }
+      }
+    } catch {
+      Write-Warn "Could not read existing secrets file; a new one will be written."
+    }
+  }
+
+  Write-Step "LTX cloud API key"
+  Write-Host "Create or copy your LTX API key here:"
+  Write-Host "  $LtxApiKeyUrl"
+  $openAnswer = Read-Host "Open the LTX API key page now? [Y/n]"
+  if ([string]::IsNullOrWhiteSpace($openAnswer) -or $openAnswer.ToLowerInvariant().StartsWith("y")) {
+    Start-Process $LtxApiKeyUrl
+  }
+  Write-Host ""
+  Write-Host "Paste the LTX API key and press Enter."
+  Write-Warn "The key will be visible while pasting. It will be saved locally at $SecretsPath."
+  $key = Read-Host "LTX API key"
+  if ([string]::IsNullOrWhiteSpace($key)) {
+    throw "An LTX API key is required for cloud mode."
+  }
+  return $key.Trim()
+}
+
+function Ensure-CloudPythonEnvironment {
+  param(
+    [string]$Uv,
+    [string]$RuntimeDir
+  )
+
+  $python = Join-Path $RuntimeDir "Scripts\python.exe"
+  if (Test-Path $python) {
+    Write-Ok "Cloud Python environment found: $python"
+    return $python
+  }
+
+  Invoke-Step "Creating cloud Python 3.11 environment" {
+    & $Uv venv --python 3.11 $RuntimeDir
+  }
+  if (-not (Test-Path $python)) {
+    throw "Cloud Python environment was created, but python.exe was not found: $python"
+  }
+  return $python
 }
 
 function Ensure-LtxCheckout {
@@ -322,12 +407,15 @@ try {
   $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
   $ConfigDir = Join-Path $env:USERPROFILE ".ltx-hdr-resolve"
   $ConfigPath = Join-Path $ConfigDir "config.json"
+  $SecretsPath = Join-Path $ConfigDir "secrets.json"
+  $CloudRuntimeDir = Join-Path $RepoRoot ".cloud-venv"
   $LtxRepoDefault = Join-Path $RepoRoot "LTX-Video"
   $ModelDirDefault = Join-Path $RepoRoot "models"
   $OutputRootDefault = Join-Path $RepoRoot "output"
 
   Write-Host "LTX HDR Resolve Windows Installer" -ForegroundColor White
   Write-Host "Repo: $RepoRoot"
+  Write-Host "Mode: $Mode"
 
   Write-Step "Installing DaVinci Resolve menu script"
   $installArgs = @()
@@ -344,34 +432,63 @@ try {
   $modelDir = $ModelDirDefault
   $outputRoot = $OutputRootDefault
   if ($CustomPaths) {
-    $ltxRepo = Read-PathDefault "LTX-Video folder" $LtxRepoDefault
-    $modelDir = Read-PathDefault "Folder containing the four LTX .safetensors model files" $ModelDirDefault
+    if ($Mode -eq "Local") {
+      $ltxRepo = Read-PathDefault "LTX-Video folder" $LtxRepoDefault
+      $modelDir = Read-PathDefault "Folder containing the four LTX .safetensors model files" $ModelDirDefault
+    }
     $outputRoot = Read-PathDefault "Output folder for LTX HDR jobs" $OutputRootDefault
   } else {
     Write-Host "Using local folders next to this installer:"
-    Write-Host "  LTX checkout: $ltxRepo"
-    Write-Host "  Models:       $modelDir"
+    if ($Mode -eq "Local") {
+      Write-Host "  LTX checkout: $ltxRepo"
+      Write-Host "  Models:       $modelDir"
+    }
     Write-Host "  Output:       $outputRoot"
   }
 
   $ltxPython = Join-Path $ltxRepo ".venv\Scripts\python.exe"
-  New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+  if ($Mode -eq "Local") {
+    New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+  }
   New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
-  Write-Ok "Using LTX Python executable: $ltxPython"
 
   Write-Step "Checking disk space"
-  Write-Warn "LTX HDR uses very large model files and EXR outputs. Keep at least $MinimumFreeGb GB free on the install drive."
-  Assert-FreeSpace $RepoRoot $MinimumFreeGb
+  if ($Mode -eq "Local") {
+    Write-Warn "LTX HDR local mode uses very large model files and EXR outputs. Keep at least $MinimumFreeGb GB free on the install drive."
+    Assert-FreeSpace $RepoRoot $MinimumFreeGb
+  } else {
+    Write-Warn "LTX HDR cloud mode keeps only Python runtime, uploads, logs, and EXR outputs locally. Keep at least $MinimumCloudFreeGb GB free."
+    Assert-FreeSpace $RepoRoot $MinimumCloudFreeGb
+  }
 
   $uv = Ensure-Uv
-  Ensure-LtxCheckout $ltxRepo
-  Ensure-LtxPythonEnvironment $uv $ltxRepo $ltxPython
-  Ensure-Models $ltxPython $modelDir $RepoRoot
+  $apiKey = ""
+  if ($Mode -eq "Local") {
+    Ensure-LtxCheckout $ltxRepo
+    Ensure-LtxPythonEnvironment $uv $ltxRepo $ltxPython
+    Ensure-Models $ltxPython $modelDir $RepoRoot
+  } else {
+    $ltxPython = Ensure-CloudPythonEnvironment $uv $CloudRuntimeDir
+    $apiKey = Get-LtxApiKey $SecretsPath
+    Write-LtxSecrets $SecretsPath $apiKey
+    Write-Ok "Saved LTX API key to $SecretsPath"
+  }
+  Write-Ok "Using Python executable: $ltxPython"
+
+  $runMode = "local"
+  if ($Mode -eq "Cloud") {
+    $runMode = "ltx_cloud"
+  }
 
   $config = [ordered]@{
+    mode = $runMode
     ltx_repo_path = $ltxRepo
     ltx_python = $ltxPython
     ltx_hdr_script = "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"
+    cloud_api_key_path = $SecretsPath
+    cloud_upload_limit_mb = 100
+    cloud_poll_seconds = 5
+    cloud_timeout_seconds = 1800
     output_root = $outputRoot
     distilled_checkpoint = Join-Path $modelDir "ltx-2.3-22b-distilled-1.1.safetensors"
     upscaler = Join-Path $modelDir "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
@@ -391,8 +508,13 @@ try {
   Write-LtxConfig $ConfigPath ([pscustomobject]$config)
   Write-Ok "Wrote $ConfigPath"
 
-  Write-Step "Checking local runtime"
-  $missingInputs = Get-MissingRuntimeInputs $ltxRepo $ltxPython $modelDir
+  Write-Step "Checking runtime"
+  $missingInputs = @()
+  if ($Mode -eq "Local") {
+    $missingInputs = Get-MissingRuntimeInputs $ltxRepo $ltxPython $modelDir
+  } elseif (-not (Test-Path $ltxPython)) {
+    $missingInputs = @("Python executable: $ltxPython")
+  }
   if ($missingInputs.Count -gt 0) {
     Write-Warn "Local LTX runtime is not ready yet."
     Write-Host ""
@@ -401,7 +523,10 @@ try {
       Write-Host "  - $missingInput"
     }
   } else {
-    $pythonCommand = Find-PythonCommand
+    $pythonCommand = @($ltxPython)
+    if ($Mode -eq "Local") {
+      $pythonCommand = Find-PythonCommand
+    }
     if ($pythonCommand.Count -eq 0) {
       Write-Warn "Python was not found on PATH. Install Python 3.11, then run this installer again."
     } else {
@@ -419,7 +544,7 @@ try {
 
       & $pythonExe @pythonArgs
       if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Local LTX HDR config validated"
+        Write-Ok "LTX HDR config validated"
       } else {
         Write-Warn "Diagnostic found missing paths or invalid settings. Fix config.json and run this installer again."
       }

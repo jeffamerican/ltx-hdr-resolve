@@ -1,67 +1,54 @@
 # Windows Setup
 
-This plugin is designed to run the LTX HDR conversion locally on the Windows workstation.
+The default Windows setup uses the LTX cloud HDR endpoint. It does not download the large open-source model files or require a local high-VRAM GPU.
 
-## 1. Prepare LTX locally
+## 1. Install
 
-Double-click `Install-Windows.cmd`. It installs `uv` if needed, downloads LTX, creates the Python 3.11 environment, installs LTX packages, and downloads the model files.
-
-**Disk space warning:** the model files are huge. The base checkpoint is about 43 GB by itself, and the full setup plus caches and generated EXR output can easily exceed 100 GB. Keep at least **120 GB free** on the drive containing this repository before running the installer.
-
-The only account step is Hugging Face model access. The installer opens these pages when needed:
-
-- [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
-- [LTX HDR IC-LoRA model access form](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
-- [LTX HDR IC-LoRA Files tab](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main)
-- [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
-
-Complete the HDR model access form/request in the browser, verify the Files tab opens, create a read token, then paste it into the installer.
-
-## 2. Configure the plugin
-
-The easy path is to double-click this file from the repository root:
+Double-click this file from the repository root:
 
 ```text
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, writes the config file, bootstraps the local runtime, downloads models, and uses folders next to `Install-Windows.cmd`.
+The installer:
 
-The default folders are:
+- installs the Resolve menu script
+- installs `uv` if needed
+- creates a small `.cloud-venv` Python runtime
+- asks for an LTX API key
+- writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`
+- saves the key in `%USERPROFILE%\.ltx-hdr-resolve\secrets.json`
+
+To change the saved API key later:
 
 ```text
-.\LTX-Video
-.\models
-.\output
+Set-LTX-Api-Key.cmd
 ```
 
-The installer also writes a conservative first-run render preset:
+Cloud mode still writes local EXR outputs, so keep at least 10 GB free for first tests.
+
+## 2. Config
+
+The default config uses:
 
 ```text
-max_frames = 49
-high_quality = false
-skip_mp4 = true
-spatial_tile = 768
-offload = cpu
+mode = ltx_cloud
+cloud_upload_limit_mb = 100
+cloud_poll_seconds = 5
+cloud_timeout_seconds = 1800
 ```
 
-This is meant to prove the pipeline and create EXRs quickly while preserving source resolution. A 1080p clip with `max_frames=161` and `high_quality=true` expands to 321 internal frames and can run for a long time before any EXR files appear. `spatial_tile=768` and `offload=cpu` reduce memory pressure without downscaling the footage; they may make the first successful run slower.
+The current v1 sends the current clip's source file. If the source file is larger than the configured upload limit, export a shorter test clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads. Timeline-range export is a planned next step.
 
-If those files are not present yet, the installer prints the exact missing paths and exits cleanly. It does not reuse stale paths from an older config.
-
-Manual equivalent from this repository:
+Advanced users can still install local GPU mode:
 
 ```powershell
-.\scripts\install_windows.ps1
+.\scripts\install_windows.ps1 -Mode Local
 ```
 
-Advanced custom folders:
+Local mode downloads model files and can exceed 120 GB.
 
-```powershell
-.\scripts\install_windows.ps1 -CustomPaths
-```
-
-## 3. Diagnose before opening Resolve
+## 3. Diagnose
 
 ```powershell
 .\scripts\diagnose_local_runtime.ps1
@@ -78,31 +65,15 @@ python .\src\ltx_hdr_worker.py convert `
 
 The command prints a `manifest.json` path. Open that file and confirm `status` is `completed` and `exr_frame_count` is greater than zero.
 
-## 4. Install the Resolve menu script
+## 4. Resolve
 
-Current user install:
-
-```powershell
-.\Install-Windows.cmd
-```
-
-All-users install, from an elevated PowerShell:
-
-```powershell
-.\scripts\install_windows.ps1 -AllUsers
-```
-
-Restart Resolve. The command appears under:
+Restart Resolve after installation. The command appears under:
 
 ```text
 Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
 ```
 
-## Resolve script locations
-
 Resolve scans these Windows script folders on startup:
 
 - Current user: `%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility`
 - All users: `%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Fusion\Scripts\Utility`
-
-Use the current-user install unless you want every Windows account on the machine to see the script.

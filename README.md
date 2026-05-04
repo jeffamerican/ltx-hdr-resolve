@@ -2,7 +2,7 @@
 
 ![LTX HDR Resolve](assets/readme/hero.png)
 
-Local-first DaVinci Resolve integration for LTX HDR IC-LoRA.
+DaVinci Resolve integration for LTX HDR IC-LoRA, with LTX cloud mode as the default path and local GPU mode available for advanced users.
 
 ## Windows Install
 
@@ -20,37 +20,35 @@ The installer file is at the repository root:
 Install-Windows.cmd
 ```
 
-It installs the Resolve menu script, writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`, and uses folders next to `Install-Windows.cmd`.
+It installs the Resolve menu script, creates a small Python runtime, asks for an LTX API key, writes `%USERPROFILE%\.ltx-hdr-resolve\config.json`, and stores the key in `%USERPROFILE%\.ltx-hdr-resolve\secrets.json`.
 
-**Disk space warning:** this installer downloads very large model files. The base checkpoint is about 43 GB by itself, and the full local setup plus caches and generated EXR output can easily exceed 100 GB. Keep at least **120 GB free** on the drive containing `ltx-hdr-resolve` before running the installer.
+To change the saved LTX API key later, double-click:
+
+```text
+Set-LTX-Api-Key.cmd
+```
+
+**Disk space warning:** cloud mode does not download the large LTX model files, but EXR outputs can still be large. Keep at least **10 GB free** for first tests. Local GPU mode can exceed **120 GB** because it downloads models and Python package caches.
 
 By default, it keeps everything inside the cloned `ltx-hdr-resolve` folder:
 
 ```text
 ltx-hdr-resolve\
-  LTX-Video\   # local LTX-2 checkout
-  models\      # downloaded .safetensors model files
+  .cloud-venv\ # small Python runtime for the Resolve worker
   output\      # generated jobs, logs, previews, EXR frames
 ```
 
-The Windows installer writes a conservative first-run config: `max_frames=49`, `high_quality=false`, `skip_mp4=true`, `spatial_tile=768`, and `offload=cpu`. This is intentional. It preserves source resolution while reducing memory pressure and should produce an EXR sequence much sooner than the full quality preset. After the pipeline is confirmed working, raise `max_frames` to `161`, set `high_quality=true`, or set `offload=none` in `%USERPROFILE%\.ltx-hdr-resolve\config.json` for longer/faster jobs.
+The Windows installer writes `mode=ltx_cloud` by default. Advanced users can install local GPU mode with:
+
+```powershell
+.\scripts\install_windows.ps1 -Mode Local
+```
 
 After restarting Resolve, run:
 
 ```text
 Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
 ```
-
-The installer downloads LTX, creates the local Python environment, and downloads the model files. Because the LTX model files are gated on Hugging Face, it will open the required Hugging Face pages and ask for a read token when model downloads are needed.
-
-Required Hugging Face pages:
-
-- [LTX-2.3 base model](https://huggingface.co/Lightricks/LTX-2.3)
-- [LTX HDR IC-LoRA model access form](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR)
-- [LTX HDR IC-LoRA Files tab](https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-HDR/tree/main)
-- [Create a Hugging Face read token](https://huggingface.co/settings/tokens/new?tokenType=read)
-
-The HDR model is gated. You must complete the Hugging Face access form/request for the HDR model before downloads work. The installer checks this before downloading the large model files.
 
 Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose different folders.
 
@@ -59,25 +57,19 @@ Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose di
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
 
 - Resolve script: runs inside DaVinci Resolve, finds the current timeline clip, calls the worker, imports the generated EXR sequence, and adds it as a take.
-- Local worker: runs in the user's normal Python environment, validates the LTX checkout and model paths, then executes the local HDR conversion pipeline.
-- Config: lives in `~/.ltx-hdr-resolve/config.json` so model weights, output folders, and the LTX repo stay local to the machine.
+- Worker: runs outside Resolve, uploads the current clip to the LTX cloud HDR endpoint, downloads the EXR ZIP, and writes a manifest.
+- Config: lives in `~/.ltx-hdr-resolve/config.json`. The LTX API key lives separately in `~/.ltx-hdr-resolve/secrets.json`.
 
 ## Why this shape
 
-LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR frames using a large local model pipeline. Keeping that work outside Resolve avoids loading PyTorch into Resolve's scripting interpreter and makes GPU/runtime failures easier to diagnose.
+LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a local 48-80 GB GPU while keeping Resolve focused on coordination and import.
 
 ## Requirements
 
 - DaVinci Resolve or Resolve Studio with scripting enabled.
-- Python 3.11 runtime for LTX.
-- `uv` for setting up the LTX repo environment.
-- NVIDIA GPU with enough VRAM for the LTX HDR workflow.
-- At least 120 GB free disk space on the install/output drive.
-- Local copies of the LTX model files:
-  - `ltx-2.3-22b-distilled-1.1.safetensors`
-  - `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`
-  - `ltx-2.3-22b-ic-lora-hdr-0.9.safetensors`
-  - `ltx-2.3-22b-ic-lora-hdr-scene-emb.safetensors`
+- LTX API key for cloud mode.
+- `uv` for creating the worker Python runtime.
+- Enough disk space for downloaded EXR outputs.
 
 ## macOS / Manual Install
 
@@ -115,7 +107,7 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 1. Open the timeline in Resolve.
 2. Move the playhead onto the clip you want to convert.
 3. Run `Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip`.
-4. The worker processes the source media locally.
+4. The worker uploads the source media to LTX cloud, polls the job, downloads EXRs, and writes logs.
 5. Resolve imports the generated EXR sequence into an `LTX HDR` bin and adds it as a take on the current timeline item when supported by the host API.
 
 ## Current v1 behavior
@@ -124,8 +116,8 @@ LTX HDR is not a lightweight color transform. It converts SDR video into HDR EXR
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.
-- Uses a first-run proof preset by default on Windows: 49 frames, source resolution preserved, high-quality mode off, MP4 preview off, smaller VAE tile, CPU offload.
-- Windows installer downloads the required model files after Hugging Face access is accepted; manual installs must provide local model paths.
+- Uses LTX cloud mode by default on Windows.
+- Local GPU mode remains available with `.\scripts\install_windows.ps1 -Mode Local`.
 - Does not change project color-management settings automatically yet.
 
 ## Recommended Resolve color settings

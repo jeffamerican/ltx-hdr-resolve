@@ -26,6 +26,7 @@ class WorkerTests(unittest.TestCase):
         models = root / "models"
         models.mkdir()
         config = {
+            "mode": "local",
             "ltx_repo_path": str(repo),
             "ltx_python": str(ltx_python),
             "ltx_hdr_script": "run_hdr_ic_lora.py",
@@ -45,10 +46,30 @@ class WorkerTests(unittest.TestCase):
             Path(config[key]).write_text("")
         return config
 
+    def make_cloud_config(self, root):
+        python = root / ".cloud-venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text("")
+        secrets = root / "secrets.json"
+        secrets.write_text(json.dumps({"ltx_api_key": "ltx_test_key"}))
+        return {
+            "mode": "ltx_cloud",
+            "ltx_python": str(python),
+            "cloud_api_key_path": str(secrets),
+            "output_root": str(root / "output"),
+        }
+
     def test_validate_config_accepts_complete_local_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self.make_config(Path(temp_dir))
             self.assertEqual([], ltx_hdr_worker.validate_config(config))
+
+    def test_validate_config_accepts_cloud_without_local_models(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = self.make_cloud_config(Path(temp_dir))
+
+            self.assertEqual([], ltx_hdr_worker.validate_config(config))
+            self.assertEqual("ltx_test_key", ltx_hdr_worker.load_ltx_api_key(config))
 
     def test_load_config_accepts_windows_utf8_bom(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -150,6 +171,11 @@ class WorkerTests(unittest.TestCase):
 
         self.assertIn("0xC0000005", detail)
         self.assertIn("access violation", detail)
+
+    def test_cloud_result_url_from_nested_output(self):
+        url = ltx_hdr_worker.find_cloud_result_url({"output": {"exr_frames_url": "https://example.com/out.zip"}})
+
+        self.assertEqual("https://example.com/out.zip", url)
 
 
 if __name__ == "__main__":
