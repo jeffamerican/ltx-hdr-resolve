@@ -8,9 +8,11 @@ embedded interpreter should only coordinate the job and import the result.
 from __future__ import print_function
 
 import glob
+import hashlib
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -163,6 +165,13 @@ def _safe_name(value):
             safe.append("_")
     cleaned = "".join(safe).strip("._")
     return cleaned or "clip"
+
+
+def _short_safe_name(value, max_prefix=40):
+    safe = _safe_name(value)
+    digest = hashlib.sha1(safe.encode("utf-8")).hexdigest()[:10]
+    prefix = safe[:max_prefix].strip("._") or "clip"
+    return prefix + "_" + digest
 
 
 def _display_name(value):
@@ -609,7 +618,7 @@ def _normalize_exr_sequence_names(exr_dir, base_name, segment_index, segment_cou
     if not frames:
         raise RuntimeError("No EXR frames found in " + exr_dir)
 
-    prefix = _safe_name(base_name) + "_ltx_hdr"
+    prefix = _short_safe_name(base_name, 36) + "_ltx_hdr"
     if segment_count > 1:
         prefix += "_part_" + str(segment_index).zfill(3) + "_of_" + str(segment_count).zfill(3)
 
@@ -618,14 +627,22 @@ def _normalize_exr_sequence_names(exr_dir, base_name, segment_index, segment_cou
         temp_path = os.path.join(exr_dir, ".__ltx_hdr_rename_" + str(segment_index).zfill(3) + "_" + str(index).zfill(6) + ".exr")
         while os.path.exists(temp_path):
             temp_path = temp_path[:-4] + "_tmp.exr"
-        os.rename(frame_path, temp_path)
+        try:
+            os.replace(frame_path, temp_path)
+        except OSError:
+            shutil.copy2(frame_path, temp_path)
+            os.remove(frame_path)
         staged.append(temp_path)
 
     final_paths = []
     for index, temp_path in enumerate(staged):
         frame_number = first_frame + index
         final_path = os.path.join(exr_dir, prefix + "_frame_" + str(frame_number).zfill(6) + ".exr")
-        os.rename(temp_path, final_path)
+        try:
+            os.replace(temp_path, final_path)
+        except OSError:
+            shutil.copy2(temp_path, final_path)
+            os.remove(temp_path)
         final_paths.append(final_path)
 
     return len(final_paths)

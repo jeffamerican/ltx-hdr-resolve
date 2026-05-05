@@ -3,6 +3,7 @@
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import mimetypes
 import os
@@ -61,6 +62,13 @@ def load_config(path):
 def sanitize_name(value):
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value or "clip").strip("._")
     return safe or "clip"
+
+
+def short_name(value, max_prefix=32):
+    safe = sanitize_name(value)
+    digest = hashlib.sha1(safe.encode("utf-8")).hexdigest()[:10]
+    prefix = safe[:max_prefix].strip("._") or "clip"
+    return prefix + "-" + digest
 
 
 def run_mode(config):
@@ -364,8 +372,9 @@ def safe_extract_zip(zip_path, destination):
 
 
 def download_cloud_exrs(url, api_key, output_dir, input_path):
-    zip_path = Path(output_dir) / (Path(input_path).stem + "_ltx_hdr_exr.zip")
-    exr_dir = Path(output_dir) / (Path(input_path).stem + "_exr")
+    input_stem = short_name(Path(input_path).stem, 28)
+    zip_path = Path(output_dir) / (input_stem + "_exr.zip")
+    exr_dir = Path(output_dir) / (input_stem + "_exr")
     request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=600) as response, open(zip_path, "wb") as output:
@@ -546,7 +555,7 @@ def read_process_lines(stream, line_queue):
 def make_job_paths(args, config=None):
     input_path = Path(args.input)
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    clip_name = sanitize_name(args.clip_name or input_path.stem)
+    clip_name = short_name(args.clip_name or input_path.stem, 32)
     output_root = ""
     if config:
         output_root = config.get("output_root") or ""

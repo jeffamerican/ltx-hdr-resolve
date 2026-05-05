@@ -127,6 +127,22 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(3, result["exr_frame_count"])
         self.assertTrue(result["preview_mp4"].endswith("shot.mp4"))
 
+    def test_make_job_paths_uses_short_deterministic_folder_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = {"output_root": str(root / "output")}
+            args = SimpleNamespace(
+                input=str(root / ("very_long_render_name_" * 8 + ".mp4")),
+                clip_name="Very Long Timeline Clip Name " * 8,
+            )
+
+            job_dir, output_dir, log_path, manifest_path = ltx_hdr_worker.make_job_paths(args, config)
+
+        self.assertLessEqual(len(job_dir.name), 60)
+        self.assertEqual(job_dir / "ltx_output", output_dir)
+        self.assertEqual(job_dir / "ltx_hdr.log", log_path)
+        self.assertEqual(job_dir / "manifest.json", manifest_path)
+
     def test_convert_validation_failure_emits_manifest_marker(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
