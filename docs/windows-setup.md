@@ -45,6 +45,8 @@ When `cloud_segment_frames` is `0`, the plugin chooses the segment size from the
 
 Segmented results are labeled with the same source clip name plus `part N of M`, and their EXR filenames use one continuous frame range across the original timeline clip.
 
+LTX HDR EXRs should be read as scene-linear sRGB/Rec.709 primaries. In Resolve ACES projects, use `ACEScct`, `ACES 2.0`, ACES Input Transform `sRGB (Linear) - CSC`, and ACES Output Transform `Rec.2100 ST.2084 (1000 nit)`. The plugin adds media-pool comments and best-effort clip tags for this, but Resolve may still require manual verification.
+
 Advanced users can still install local GPU mode:
 
 ```powershell

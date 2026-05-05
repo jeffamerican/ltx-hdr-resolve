@@ -117,6 +117,7 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 - Labels segmented EXR outputs with the same source clip name, `part N of M`, and a continuous output frame range so the pieces are easy to reassemble.
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
+- Adds media-pool comments and best-effort clip color tags for the LTX HDR EXR input transform.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.
 - Uses LTX cloud mode by default on Windows.
 - Local GPU mode remains available with `.\scripts\install_windows.ps1 -Mode Local`.
@@ -124,7 +125,9 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 
 ## Recommended Resolve color settings
 
-For imported HDR EXR files, use the LTX-recommended Resolve settings:
+LTX HDR produces scene-linear 16-bit EXR frames. Read them as linear sRGB/Rec.709 primaries, not Rec.709 gamma, PQ, or ACEScg. In an ACES workflow, the correct input transform is `sRGB (Linear) - CSC`.
+
+For imported HDR EXR files, use the LTX-recommended Resolve project settings:
 
 - Color science: `ACEScct`
 - ACES version: `ACES 2.0`
@@ -132,6 +135,8 @@ For imported HDR EXR files, use the LTX-recommended Resolve settings:
 - ACES Output Transform: `Rec.2100 ST.2084 (1000 nit)`
 
 Also enable 10-bit precision in viewers if available.
+
+The plugin writes this color-space note into each imported media-pool item's comments and tries to set common Resolve clip color-space properties. Resolve may reject script-level color tags depending on project color management, so verify the imported EXR sequence is interpreted with `sRGB (Linear) - CSC`.
 
 ## Next steps after v1
 

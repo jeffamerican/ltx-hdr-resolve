@@ -42,6 +42,23 @@ class ResolveScriptTests(unittest.TestCase):
         self.assertLessEqual(len(name), 80)
         self.assertIn("_ltxhdr_p012of014_f1000_1040", name)
 
+    def test_tag_ltx_hdr_color_space_uses_aces_linear_srgb_candidates(self):
+        class FakeItem:
+            def __init__(self):
+                self.calls = []
+
+            def SetClipProperty(self, key, value):
+                self.calls.append((key, value))
+                return key == "ACES Input Transform"
+
+        item = FakeItem()
+
+        accepted = ltx_hdr_resolve._tag_ltx_hdr_color_space(item)
+
+        self.assertEqual(["ACES Input Transform"], accepted)
+        self.assertIn(("ACES Input Transform", "sRGB (Linear) - CSC"), item.calls)
+        self.assertIn(("Input Gamma", "Linear"), item.calls)
+
 
 if __name__ == "__main__":
     unittest.main()
