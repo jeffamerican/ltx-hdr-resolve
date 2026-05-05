@@ -56,7 +56,7 @@ Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose di
 
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
 
-- Resolve script: runs inside DaVinci Resolve, exports the current timeline clip range, calls the worker, imports the generated EXR sequence, and adds it as a take.
+- Resolve script: runs inside DaVinci Resolve, exports the current timeline clip range, auto-segments it if needed for LTX cloud limits, calls the worker, imports the generated EXR sequence, and adds it as a take when the result is a single segment.
 - Worker: runs outside Resolve, uploads the current clip to the LTX cloud HDR endpoint, downloads the EXR ZIP, and writes a manifest.
 - Config: lives in `~/.ltx-hdr-resolve/config.json`. The LTX API key lives separately in `~/.ltx-hdr-resolve/secrets.json`.
 
@@ -107,12 +107,13 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 1. Open the timeline in Resolve.
 2. Move the playhead onto the clip you want to convert.
 3. Run `Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip`.
-4. Resolve exports only that timeline clip range, then the worker uploads that segment to LTX cloud, polls the job, downloads EXRs, and writes logs.
+4. Resolve exports only that timeline clip range, auto-segments it when needed, then the worker uploads each segment to LTX cloud, polls the jobs, downloads EXRs, and writes logs.
 5. Resolve imports the generated EXR sequence into an `LTX HDR` bin and adds it as a take on the current timeline item when supported by the host API.
 
 ## Current v1 behavior
 
 - Processes a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead. It only uses a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected.
+- Auto-segments timeline clips that exceed LTX cloud frame limits. Single-segment results are added as a take; multi-segment results are imported as separate EXR sequences in the `LTX HDR` bin.
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.

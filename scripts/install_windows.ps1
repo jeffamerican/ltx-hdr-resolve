@@ -487,6 +487,7 @@ try {
     ltx_hdr_script = "packages\ltx-pipelines\src\ltx_pipelines\hdr_ic_lora.py"
     cloud_api_key_path = $SecretsPath
     cloud_upload_limit_mb = 100
+    cloud_segment_frames = 0
     cloud_poll_seconds = 5
     cloud_timeout_seconds = 1800
     output_root = $outputRoot

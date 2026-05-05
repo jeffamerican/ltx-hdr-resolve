@@ -23,6 +23,9 @@ LOG_MARKER = "LTX_HDR_LOG="
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 STATUS_MARKER = "LTX_HDR_STATUS="
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
+DEFAULT_LTX_1080P_MAX_FRAMES = 181
+DEFAULT_LTX_1440P_MAX_FRAMES = 101
+DEFAULT_LTX_4K_MAX_FRAMES = 41
 
 
 def _resolve_app():
@@ -280,8 +283,71 @@ def _find_rendered_segment(target_dir, custom_name):
     return candidates[0][1]
 
 
-def _render_timeline_item_segment(project, timeline_item, config):
+def _timeline_resolution(timeline):
+    width = 0
+    height = 0
+    for key in ("timelineResolutionWidth", "timelineResolutionHeight"):
+        try:
+            value = int(timeline.GetSetting(key) or 0)
+        except Exception:
+            value = 0
+        if key.endswith("Width"):
+            width = value
+        else:
+            height = value
+    return width, height
+
+
+def _cloud_segment_frame_limit(config, timeline):
+    configured = config.get("cloud_segment_frames")
+    if configured is not None:
+        try:
+            configured_int = int(configured)
+            if configured_int > 0:
+                return configured_int
+        except Exception:
+            pass
+
+    width, height = _timeline_resolution(timeline)
+    largest = max(width, height)
+    if largest >= 3840 or height >= 2160:
+        return DEFAULT_LTX_4K_MAX_FRAMES
+    if largest >= 2560 or height >= 1440:
+        return DEFAULT_LTX_1440P_MAX_FRAMES
+    return DEFAULT_LTX_1080P_MAX_FRAMES
+
+
+def _timeline_item_segments(timeline_item, max_frames):
     start, mark_out, duration = _timeline_item_range(timeline_item)
+    if max_frames < 1:
+        max_frames = duration
+    segments = []
+    segment_start = start
+    index = 1
+    while segment_start <= mark_out:
+        segment_out = min(mark_out, segment_start + max_frames - 1)
+        segments.append(
+            {
+                "index": index,
+                "start": segment_start,
+                "mark_out": segment_out,
+                "duration": segment_out - segment_start + 1,
+            }
+        )
+        index += 1
+        segment_start = segment_out + 1
+    return segments
+
+
+def _render_timeline_item_segment(project, timeline_item, config, segment=None, segment_count=1):
+    if segment:
+        start = int(segment["start"])
+        mark_out = int(segment["mark_out"])
+        duration = int(segment["duration"])
+        segment_index = int(segment["index"])
+    else:
+        start, mark_out, duration = _timeline_item_range(timeline_item)
+        segment_index = 1
     output_root = config.get("output_root") or os.path.join(os.path.expanduser("~"), ".ltx-hdr-resolve", "output")
     target_dir = os.path.join(output_root, "resolve_exports")
     try:
@@ -289,7 +355,7 @@ def _render_timeline_item_segment(project, timeline_item, config):
     except Exception:
         pass
 
-    custom_name = _safe_name(timeline_item.GetName() or "timeline_clip") + "_frames_" + str(duration)
+    custom_name = _safe_name(timeline_item.GetName() or "timeline_clip") + "_part_" + str(segment_index).zfill(3) + "_frames_" + str(duration)
     render_format = _set_render_format_for_upload(project)
     if not render_format:
         raise RuntimeError("Could not set a Resolve render format for timeline clip export.")
@@ -318,7 +384,10 @@ def _render_timeline_item_segment(project, timeline_item, config):
     if not job_id:
         raise RuntimeError("Resolve did not create a render job for timeline clip export.")
 
-    _log("Exporting timeline clip range " + str(start) + "-" + str(mark_out) + " (" + str(duration) + " frames) before LTX upload.")
+    label = ""
+    if segment_count > 1:
+        label = " segment " + str(segment_index) + "/" + str(segment_count)
+    _log("Exporting timeline clip" + label + " range " + str(start) + "-" + str(mark_out) + " (" + str(duration) + " frames) before LTX upload.")
     if not _start_rendering(project, job_id):
         try:
             project.DeleteRenderJob(job_id)
@@ -479,70 +548,7 @@ def _import_exr_sequence(project, exr_dir, name):
     return item
 
 
-def main():
-    app = _resolve_app()
-    if not app:
-        _alert("Resolve scripting API is not available.")
-        return
-
-    project_manager = app.GetProjectManager()
-    project = project_manager.GetCurrentProject() if project_manager else None
-    timeline = project.GetCurrentTimeline() if project else None
-    if not project or not timeline:
-        _alert("Open a project and timeline before running LTX HDR.")
-        return
-
-    try:
-        current_item, timeline_item_source = _timeline_item_for_ltx(timeline)
-    except Exception as exc:
-        _alert(str(exc))
-        return
-
-    worker = _worker_path()
-    if not os.path.exists(worker):
-        _alert("Worker not found at " + worker)
-        return
-
-    config_path = os.environ.get("LTX_HDR_CONFIG", DEFAULT_CONFIG_PATH)
-    if not os.path.exists(config_path):
-        _alert("Missing config: " + config_path)
-        return
-
-    try:
-        config = _load_config(config_path)
-    except Exception as exc:
-        _alert("Could not read config: " + config_path + "\n" + str(exc))
-        return
-
-    worker_python = config.get("ltx_python") or ""
-    if not worker_python:
-        _alert("Config is missing ltx_python: " + config_path)
-        return
-    if not os.path.exists(worker_python):
-        _alert("Configured LTX Python was not found:\n" + worker_python + "\n\nRun Install-Windows.cmd again.")
-        return
-
-    clip_name = ""
-    clip_path = ""
-    if current_item:
-        try:
-            clip_path, timeline_frame_count = _render_timeline_item_segment(project, current_item, config)
-        except Exception as exc:
-            _alert("Could not export the timeline clip range for LTX HDR:\n" + str(exc))
-            return
-        clip_name = current_item.GetName() or os.path.basename(clip_path) or "timeline_clip"
-        _log("Exported " + timeline_item_source + ": " + os.path.basename(clip_path) + " (" + str(timeline_frame_count) + " frames)")
-    else:
-        clip_path, clip_name = _selected_media_pool_clip_path(project)
-        if not clip_path:
-            _alert("Move the playhead onto a timeline video clip, or select exactly one source clip in the Media Pool.")
-            return
-        _log("No timeline clip under the playhead; using selected Media Pool source clip.")
-
-    if not clip_path or not os.path.exists(clip_path):
-        _alert("Could not resolve an input clip path for LTX HDR.")
-        return
-
+def _run_worker_conversion(worker_python, worker, config_path, clip_path, clip_name):
     command = [
         worker_python,
         worker,
@@ -594,39 +600,137 @@ def main():
 
     if completed.returncode != 0:
         if manifest:
-            _alert(_format_worker_failure(manifest, manifest_path, err_output or output))
-            return
+            raise RuntimeError(_format_worker_failure(manifest, manifest_path, err_output or output))
         detail = err_output or output
         if manifest_path:
             detail = "Worker reported a manifest path, but the file was not found:\n" + manifest_path + "\n\n" + detail
         if log_path:
             detail += "\n\nLog: " + log_path
-        _alert("LTX HDR conversion failed before it wrote a readable manifest.\n" + detail[-1200:])
-        return
+        raise RuntimeError("LTX HDR conversion failed before it wrote a readable manifest.\n" + detail[-1200:])
 
     if not manifest:
         detail = output + "\n" + err_output
         if log_path:
             detail += "\n\nLog: " + log_path
-        _alert("LTX HDR conversion did not return a manifest path.\n" + detail[-1200:])
-        return
+        raise RuntimeError("LTX HDR conversion did not return a manifest path.\n" + detail[-1200:])
 
     if manifest.get("status") != "completed":
-        _alert(_format_worker_failure(manifest, manifest_path, err_output or output))
+        raise RuntimeError(_format_worker_failure(manifest, manifest_path, err_output or output))
+
+    return manifest
+
+
+def main():
+    app = _resolve_app()
+    if not app:
+        _alert("Resolve scripting API is not available.")
         return
 
-    exr_dir = manifest.get("exr_dir")
-    if not exr_dir or not os.path.isdir(exr_dir):
-        _alert("Conversion completed but no EXR directory was reported.")
+    project_manager = app.GetProjectManager()
+    project = project_manager.GetCurrentProject() if project_manager else None
+    timeline = project.GetCurrentTimeline() if project else None
+    if not project or not timeline:
+        _alert("Open a project and timeline before running LTX HDR.")
         return
 
-    imported_item = _import_exr_sequence(project, exr_dir, current_item.GetName() or "clip")
     try:
-        current_item.AddTake(imported_item)
-        current_item.FinalizeTake()
-        _alert("Imported LTX HDR EXR sequence and added it as a take.")
-    except Exception:
-        _alert("Imported LTX HDR EXR sequence into the LTX HDR bin. AddTake was not accepted by Resolve for this clip.")
+        current_item, timeline_item_source = _timeline_item_for_ltx(timeline)
+    except Exception as exc:
+        _alert(str(exc))
+        return
+
+    worker = _worker_path()
+    if not os.path.exists(worker):
+        _alert("Worker not found at " + worker)
+        return
+
+    config_path = os.environ.get("LTX_HDR_CONFIG", DEFAULT_CONFIG_PATH)
+    if not os.path.exists(config_path):
+        _alert("Missing config: " + config_path)
+        return
+
+    try:
+        config = _load_config(config_path)
+    except Exception as exc:
+        _alert("Could not read config: " + config_path + "\n" + str(exc))
+        return
+
+    worker_python = config.get("ltx_python") or ""
+    if not worker_python:
+        _alert("Config is missing ltx_python: " + config_path)
+        return
+    if not os.path.exists(worker_python):
+        _alert("Configured LTX Python was not found:\n" + worker_python + "\n\nRun Install-Windows.cmd again.")
+        return
+
+    conversion_inputs = []
+    base_clip_name = ""
+    if current_item:
+        try:
+            base_clip_name = current_item.GetName() or "timeline_clip"
+            segment_limit = _cloud_segment_frame_limit(config, timeline)
+            segments = _timeline_item_segments(current_item, segment_limit)
+            total_frames = sum(segment["duration"] for segment in segments)
+            if len(segments) > 1:
+                _log("Timeline clip is " + str(total_frames) + " frames; auto-segmenting into " + str(len(segments)) + " chunks of up to " + str(segment_limit) + " frames.")
+            for segment in segments:
+                clip_path, timeline_frame_count = _render_timeline_item_segment(project, current_item, config, segment, len(segments))
+                clip_name = base_clip_name
+                if len(segments) > 1:
+                    clip_name += "_part_" + str(segment["index"]).zfill(3)
+                conversion_inputs.append(
+                    {
+                        "path": clip_path,
+                        "name": clip_name,
+                        "frames": timeline_frame_count,
+                        "index": segment["index"],
+                    }
+                )
+        except Exception as exc:
+            _alert("Could not export the timeline clip range for LTX HDR:\n" + str(exc))
+            return
+        _log("Exported " + timeline_item_source + " into " + str(len(conversion_inputs)) + " segment(s).")
+    else:
+        clip_path, clip_name = _selected_media_pool_clip_path(project)
+        if not clip_path:
+            _alert("Move the playhead onto a timeline video clip, or select exactly one source clip in the Media Pool.")
+            return
+        _log("No timeline clip under the playhead; using selected Media Pool source clip.")
+        conversion_inputs.append({"path": clip_path, "name": clip_name or "clip", "frames": 0, "index": 1})
+
+    imported_items = []
+    for item in conversion_inputs:
+        clip_path = item["path"]
+        clip_name = item["name"]
+        if not clip_path or not os.path.exists(clip_path):
+            _alert("Could not resolve an input clip path for LTX HDR.")
+            return
+        try:
+            manifest = _run_worker_conversion(worker_python, worker, config_path, clip_path, clip_name)
+        except Exception as exc:
+            _alert(str(exc))
+            return
+
+        exr_dir = manifest.get("exr_dir")
+        if not exr_dir or not os.path.isdir(exr_dir):
+            _alert("Conversion completed but no EXR directory was reported.")
+            return
+        imported_items.append(_import_exr_sequence(project, exr_dir, clip_name))
+
+    if current_item and len(imported_items) == 1:
+        try:
+            current_item.AddTake(imported_items[0])
+            current_item.FinalizeTake()
+            _alert("Imported LTX HDR EXR sequence and added it as a take.")
+            return
+        except Exception:
+            _alert("Imported LTX HDR EXR sequence into the LTX HDR bin. AddTake was not accepted by Resolve for this clip.")
+            return
+
+    if len(imported_items) > 1:
+        _alert("Imported " + str(len(imported_items)) + " LTX HDR EXR segment sequences into the LTX HDR bin.")
+    else:
+        _alert("Imported LTX HDR EXR sequence into the LTX HDR bin.")
 
 
 if __name__ == "__main__":

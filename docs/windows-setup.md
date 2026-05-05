@@ -34,11 +34,14 @@ The default config uses:
 ```text
 mode = ltx_cloud
 cloud_upload_limit_mb = 100
+cloud_segment_frames = 0
 cloud_poll_seconds = 5
 cloud_timeout_seconds = 1800
 ```
 
-The current v1 exports a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead, and sends that rendered segment to LTX. It only sends a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected. If the rendered segment is larger than the configured upload limit, trim the timeline clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads.
+The current v1 exports a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead, and sends rendered segment(s) to LTX. It only sends a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected.
+
+When `cloud_segment_frames` is `0`, the plugin chooses the segment size from the timeline resolution: 181 frames up to 1080p, 101 frames up to 1440p, and 41 frames for 4K. You can override this with an explicit positive frame count. If a rendered segment is larger than the configured upload limit, trim the timeline clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads.
 
 Advanced users can still install local GPU mode:
 
