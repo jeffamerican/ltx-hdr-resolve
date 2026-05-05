@@ -114,6 +114,7 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 
 - Processes a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead. It only uses a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected.
 - Auto-segments timeline clips that exceed LTX cloud frame limits. Single-segment results are added as a take; multi-segment results are imported as separate EXR sequences in the `LTX HDR` bin.
+- Labels segmented EXR outputs with the same source clip name, `part N of M`, and a continuous output frame range so the pieces are easy to reassemble.
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.

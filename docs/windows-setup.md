@@ -43,6 +43,8 @@ The current v1 exports a single selected timeline clip when Resolve exposes time
 
 When `cloud_segment_frames` is `0`, the plugin chooses the segment size from the timeline resolution: 181 frames up to 1080p, 101 frames up to 1440p, and 41 frames for 4K. You can override this with an explicit positive frame count. If a rendered segment is larger than the configured upload limit, trim the timeline clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads.
 
+Segmented results are labeled with the same source clip name plus `part N of M`, and their EXR filenames use one continuous frame range across the original timeline clip.
+
 Advanced users can still install local GPU mode:
 
 ```powershell
