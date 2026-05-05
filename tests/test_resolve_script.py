@@ -38,6 +38,12 @@ class ResolveScriptTests(unittest.TestCase):
 
         self.assertEqual("Hero Shot LTX HDR part 003 of 004 frames 000365-000405", label)
 
+    def test_render_custom_name_is_short_and_segmented(self):
+        name = ltx_hdr_resolve._render_custom_name("Very Long Scene Name " * 6, 12, 14, 1000, 1040)
+
+        self.assertLessEqual(len(name), 80)
+        self.assertIn("_ltxhdr_p012of014_f1000_1040", name)
+
 
 if __name__ == "__main__":
     unittest.main()

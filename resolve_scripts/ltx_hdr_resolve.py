@@ -138,6 +138,13 @@ def _log(message):
     print("[LTX HDR] " + message)
 
 
+def _open_resolve_page(app, page_name):
+    try:
+        app.OpenPage(page_name)
+    except Exception:
+        pass
+
+
 def _clip_file_path(media_pool_item):
     props = media_pool_item.GetClipProperty() or {}
     for key in ("File Path", "FilePath", "Path", "Source File", "SourceFile"):
@@ -177,6 +184,23 @@ def _segment_label(base_name, segment_index, segment_count, first_frame, frame_c
         + str(first_frame).zfill(6)
         + "-"
         + str(first_frame + max(frame_count, 1) - 1).zfill(6)
+    )
+
+
+def _render_custom_name(base_name, segment_index, segment_count, start, mark_out):
+    safe = _safe_name(base_name)
+    if len(safe) > 40:
+        safe = safe[:40].strip("._") or "clip"
+    return (
+        safe
+        + "_ltxhdr_p"
+        + str(segment_index).zfill(3)
+        + "of"
+        + str(segment_count).zfill(3)
+        + "_f"
+        + str(start)
+        + "_"
+        + str(mark_out)
     )
 
 
@@ -264,6 +288,49 @@ def _start_rendering(project, job_id):
                 return True
         except Exception:
             pass
+    return False
+
+
+def _set_render_settings_with_fallbacks(project, settings):
+    attempts = [
+        (
+            "full",
+            settings,
+        ),
+        (
+            "without optional delivery flags",
+            {
+                "SelectAllFrames": settings["SelectAllFrames"],
+                "MarkIn": settings["MarkIn"],
+                "MarkOut": settings["MarkOut"],
+                "TargetDir": settings["TargetDir"],
+                "CustomName": settings["CustomName"],
+                "ExportVideo": settings["ExportVideo"],
+                "ExportAudio": settings["ExportAudio"],
+            },
+        ),
+        (
+            "minimal timeline range",
+            {
+                "SelectAllFrames": settings["SelectAllFrames"],
+                "MarkIn": settings["MarkIn"],
+                "MarkOut": settings["MarkOut"],
+                "TargetDir": settings["TargetDir"],
+                "CustomName": settings["CustomName"],
+            },
+        ),
+    ]
+    for label, attempt_settings in attempts:
+        try:
+            result = project.SetRenderSettings(attempt_settings)
+        except Exception as exc:
+            _log("Resolve rejected " + label + " render settings: " + repr(exc))
+            continue
+        if result is not False:
+            if label != "full":
+                _log("Resolve accepted " + label + " render settings.")
+            return True
+        _log("Resolve returned false for " + label + " render settings.")
     return False
 
 
@@ -377,27 +444,16 @@ def _render_timeline_item_segment(project, timeline_item, config, segment=None, 
     except Exception:
         pass
 
-    safe_clip_name = _safe_name(timeline_item.GetName() or "timeline_clip")
-    custom_name = (
-        safe_clip_name
-        + "_ltx_hdr_part_"
-        + str(segment_index).zfill(3)
-        + "_of_"
-        + str(segment_count).zfill(3)
-        + "_timeline_"
-        + str(start)
-        + "_"
-        + str(mark_out)
-    )
-    render_format = _set_render_format_for_upload(project)
-    if not render_format:
-        raise RuntimeError("Could not set a Resolve render format for timeline clip export.")
-
     try:
         project.SetCurrentRenderMode(1)
     except Exception:
         pass
 
+    render_format = _set_render_format_for_upload(project)
+    if not render_format:
+        raise RuntimeError("Could not set a Resolve render format for timeline clip export.")
+
+    custom_name = _render_custom_name(timeline_item.GetName() or "timeline_clip", segment_index, segment_count, start, mark_out)
     settings = {
         "SelectAllFrames": False,
         "MarkIn": start,
@@ -410,8 +466,20 @@ def _render_timeline_item_segment(project, timeline_item, config, segment=None, 
         "VideoQuality": "Best",
         "NetworkOptimization": True,
     }
-    if not project.SetRenderSettings(settings):
-        raise RuntimeError("Resolve rejected render settings for timeline clip export.")
+    if not _set_render_settings_with_fallbacks(project, settings):
+        raise RuntimeError(
+            "Resolve rejected render settings for timeline clip export.\n"
+            + "Format: "
+            + render_format
+            + "\nRange: "
+            + str(start)
+            + "-"
+            + str(mark_out)
+            + "\nTarget: "
+            + target_dir
+            + "\nName: "
+            + custom_name
+        )
 
     job_id = project.AddRenderJob()
     if not job_id:
@@ -771,8 +839,10 @@ def main():
                 )
                 next_output_frame += timeline_frame_count
         except Exception as exc:
+            _open_resolve_page(app, "edit")
             _alert("Could not export the timeline clip range for LTX HDR:\n" + str(exc))
             return
+        _open_resolve_page(app, "edit")
         _log("Exported " + timeline_item_source + " into " + str(len(conversion_inputs)) + " segment(s).")
     else:
         clip_path, clip_name = _selected_media_pool_clip_path(project)
