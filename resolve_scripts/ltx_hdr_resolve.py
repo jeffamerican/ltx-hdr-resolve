@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import traceback
 
 
@@ -21,6 +22,7 @@ DEFAULT_CONFIG_PATH = os.path.expanduser("~/.ltx-hdr-resolve/config.json")
 LOG_MARKER = "LTX_HDR_LOG="
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 STATUS_MARKER = "LTX_HDR_STATUS="
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
 
 
 def _resolve_app():
@@ -142,6 +144,17 @@ def _clip_file_path(media_pool_item):
     return ""
 
 
+def _safe_name(value):
+    safe = []
+    for char in value or "clip":
+        if char.isalnum() or char in ("-", "_", "."):
+            safe.append(char)
+        else:
+            safe.append("_")
+    cleaned = "".join(safe).strip("._")
+    return cleaned or "clip"
+
+
 def _worker_path():
     root = PLUGIN_ROOT
     if not root:
@@ -187,6 +200,193 @@ def _format_worker_failure(manifest, manifest_path, fallback):
     if manifest_path:
         message += "\nManifest: " + manifest_path
     return message
+
+
+def _timeline_item_range(timeline_item):
+    start = int(timeline_item.GetStart())
+    duration = int(timeline_item.GetDuration())
+    if duration < 1:
+        raise RuntimeError("Timeline item duration is not valid.")
+    return start, start + duration - 1, duration
+
+
+def _set_render_format_for_upload(project):
+    candidates = (
+        ("mp4", "H264"),
+        ("mp4", "H.264"),
+        ("mov", "H264"),
+        ("mov", "ProRes422"),
+    )
+    for render_format, codec in candidates:
+        try:
+            if project.SetCurrentRenderFormatAndCodec(render_format, codec):
+                return render_format
+        except Exception:
+            pass
+    return ""
+
+
+def _start_rendering(project, job_id):
+    attempts = (
+        lambda: project.StartRendering([job_id], False),
+        lambda: project.StartRendering([job_id]),
+        lambda: project.StartRendering(job_id, False),
+        lambda: project.StartRendering(job_id),
+    )
+    for attempt in attempts:
+        try:
+            if attempt():
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _render_status_text(status):
+    if not status:
+        return ""
+    for key in ("JobStatus", "jobStatus", "Status", "status"):
+        value = status.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _render_completion(status):
+    if not status:
+        return ""
+    for key in ("CompletionPercentage", "completionPercentage", "Progress", "progress"):
+        value = status.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _find_rendered_segment(target_dir, custom_name):
+    candidates = []
+    if not os.path.isdir(target_dir):
+        return ""
+    for name in os.listdir(target_dir):
+        lower = name.lower()
+        if name.startswith(custom_name) and lower.endswith(VIDEO_EXTENSIONS):
+            path = os.path.join(target_dir, name)
+            try:
+                candidates.append((os.path.getmtime(path), path))
+            except Exception:
+                candidates.append((0, path))
+    if not candidates:
+        return ""
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def _render_timeline_item_segment(project, timeline_item, config):
+    start, mark_out, duration = _timeline_item_range(timeline_item)
+    output_root = config.get("output_root") or os.path.join(os.path.expanduser("~"), ".ltx-hdr-resolve", "output")
+    target_dir = os.path.join(output_root, "resolve_exports")
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except Exception:
+        pass
+
+    custom_name = _safe_name(timeline_item.GetName() or "timeline_clip") + "_frames_" + str(duration)
+    render_format = _set_render_format_for_upload(project)
+    if not render_format:
+        raise RuntimeError("Could not set a Resolve render format for timeline clip export.")
+
+    try:
+        project.SetCurrentRenderMode(1)
+    except Exception:
+        pass
+
+    settings = {
+        "SelectAllFrames": False,
+        "MarkIn": start,
+        "MarkOut": mark_out,
+        "TargetDir": target_dir,
+        "CustomName": custom_name,
+        "UniqueFilenameStyle": 1,
+        "ExportVideo": True,
+        "ExportAudio": False,
+        "VideoQuality": "Best",
+        "NetworkOptimization": True,
+    }
+    if not project.SetRenderSettings(settings):
+        raise RuntimeError("Resolve rejected render settings for timeline clip export.")
+
+    job_id = project.AddRenderJob()
+    if not job_id:
+        raise RuntimeError("Resolve did not create a render job for timeline clip export.")
+
+    _log("Exporting timeline clip range " + str(start) + "-" + str(mark_out) + " (" + str(duration) + " frames) before LTX upload.")
+    if not _start_rendering(project, job_id):
+        try:
+            project.DeleteRenderJob(job_id)
+        except Exception:
+            pass
+        raise RuntimeError("Resolve did not start the timeline clip render job.")
+
+    last_status = ""
+    while True:
+        status = {}
+        try:
+            status = project.GetRenderJobStatus(job_id) or {}
+        except Exception:
+            status = {}
+        status_text = _render_status_text(status)
+        completion = _render_completion(status)
+        if completion and completion != last_status:
+            _log("Timeline export progress: " + completion + "%")
+            last_status = completion
+        if status_text.lower() in ("complete", "completed", "success", "succeeded"):
+            break
+        if status_text.lower() in ("failed", "cancelled", "canceled"):
+            raise RuntimeError("Timeline clip export failed: " + json.dumps(status))
+        try:
+            if not project.IsRenderingInProgress():
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
+    rendered_path = _find_rendered_segment(target_dir, custom_name)
+    try:
+        project.DeleteRenderJob(job_id)
+    except Exception:
+        pass
+    if not rendered_path or not os.path.exists(rendered_path):
+        raise RuntimeError("Timeline clip export finished but no rendered file was found in " + target_dir)
+    return rendered_path, duration
+
+
+def _selected_media_pool_clip_path(project):
+    media_pool = project.GetMediaPool() if project else None
+    if not media_pool:
+        return "", ""
+    try:
+        selected = media_pool.GetSelectedClips() or []
+    except Exception:
+        selected = []
+    if len(selected) != 1:
+        return "", ""
+    clip_path = _clip_file_path(selected[0])
+    return clip_path, selected[0].GetName() or os.path.basename(clip_path)
+
+
+def _timeline_item_for_ltx(timeline):
+    try:
+        selected = timeline.GetSelectedClips() or []
+    except Exception:
+        selected = []
+    if len(selected) == 1:
+        return selected[0], "selected timeline clip"
+    if len(selected) > 1:
+        raise RuntimeError("Select exactly one timeline clip for LTX HDR.")
+
+    current_item = timeline.GetCurrentVideoItem()
+    if current_item:
+        return current_item, "timeline clip under playhead"
+    return None, ""
 
 
 def _worker_startup_kwargs():
@@ -292,19 +492,10 @@ def main():
         _alert("Open a project and timeline before running LTX HDR.")
         return
 
-    current_item = timeline.GetCurrentVideoItem()
-    if not current_item:
-        _alert("Move the playhead onto a video clip before running LTX HDR.")
-        return
-
-    media_pool_item = current_item.GetMediaPoolItem()
-    if not media_pool_item:
-        _alert("Current timeline item has no source media-pool item.")
-        return
-
-    clip_path = _clip_file_path(media_pool_item)
-    if not clip_path or not os.path.exists(clip_path):
-        _alert("Could not resolve the current clip's source file path.")
+    try:
+        current_item, timeline_item_source = _timeline_item_for_ltx(timeline)
+    except Exception as exc:
+        _alert(str(exc))
         return
 
     worker = _worker_path()
@@ -331,6 +522,27 @@ def main():
         _alert("Configured LTX Python was not found:\n" + worker_python + "\n\nRun Install-Windows.cmd again.")
         return
 
+    clip_name = ""
+    clip_path = ""
+    if current_item:
+        try:
+            clip_path, timeline_frame_count = _render_timeline_item_segment(project, current_item, config)
+        except Exception as exc:
+            _alert("Could not export the timeline clip range for LTX HDR:\n" + str(exc))
+            return
+        clip_name = current_item.GetName() or os.path.basename(clip_path) or "timeline_clip"
+        _log("Exported " + timeline_item_source + ": " + os.path.basename(clip_path) + " (" + str(timeline_frame_count) + " frames)")
+    else:
+        clip_path, clip_name = _selected_media_pool_clip_path(project)
+        if not clip_path:
+            _alert("Move the playhead onto a timeline video clip, or select exactly one source clip in the Media Pool.")
+            return
+        _log("No timeline clip under the playhead; using selected Media Pool source clip.")
+
+    if not clip_path or not os.path.exists(clip_path):
+        _alert("Could not resolve an input clip path for LTX HDR.")
+        return
+
     command = [
         worker_python,
         worker,
@@ -340,10 +552,10 @@ def main():
         "--input",
         clip_path,
         "--clip-name",
-        current_item.GetName() or media_pool_item.GetName() or "clip",
+        clip_name or "clip",
     ]
 
-    _log("Starting local LTX HDR conversion for: " + os.path.basename(clip_path))
+    _log("Starting LTX HDR conversion for: " + os.path.basename(clip_path))
     _log("Using LTX Python: " + worker_python)
     completed = subprocess.Popen(
         command,

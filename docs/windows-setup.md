@@ -38,7 +38,7 @@ cloud_poll_seconds = 5
 cloud_timeout_seconds = 1800
 ```
 
-The current v1 sends the current clip's source file. If the source file is larger than the configured upload limit, export a shorter test clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads. Timeline-range export is a planned next step.
+The current v1 exports a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead, and sends that rendered segment to LTX. It only sends a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected. If the rendered segment is larger than the configured upload limit, trim the timeline clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads.
 
 Advanced users can still install local GPU mode:
 
