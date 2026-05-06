@@ -4,9 +4,9 @@
 
 DaVinci Resolve integration for LTX HDR IC-LoRA, with LTX cloud mode as the default path and local GPU mode available for advanced users.
 
-## Windows Install
+## One-Click Install
 
-For Windows users, the install path is:
+### Windows
 
 ```text
 1. Download or clone this repository.
@@ -28,17 +28,35 @@ To change the saved LTX API key later, double-click:
 Set-LTX-Api-Key.cmd
 ```
 
+### macOS
+
+```text
+1. Download or clone this repository.
+2. Double-click Install-macOS.command.
+3. Restart DaVinci Resolve.
+```
+
+The macOS installer does the same cloud-mode setup: installs the Resolve menu script, creates `.cloud-venv`, asks for the LTX API key, writes `~/.ltx-hdr-resolve/config.json`, and stores the key in `~/.ltx-hdr-resolve/secrets.json`.
+
+To change the saved LTX API key later, double-click:
+
+```text
+Set-LTX-Api-Key-macOS.command
+```
+
+See [docs/macos-setup.md](docs/macos-setup.md) for details.
+
 **Disk space warning:** cloud mode does not download the large LTX model files, but EXR outputs can still be large. Keep at least **10 GB free** for first tests. Local GPU mode can exceed **120 GB** because it downloads models and Python package caches.
 
 By default, it keeps everything inside the cloned `ltx-hdr-resolve` folder:
 
 ```text
-ltx-hdr-resolve\
-  .cloud-venv\ # small Python runtime for the Resolve worker
-  output\      # generated jobs, logs, previews, EXR frames
+ltx-hdr-resolve/
+  .cloud-venv/ # small Python runtime for the Resolve worker
+  output/      # generated jobs, logs, previews, EXR frames
 ```
 
-The Windows installer writes `mode=ltx_cloud` by default. Advanced users can install local GPU mode with:
+The one-click installers write `mode=ltx_cloud` by default. Advanced Windows users can install local GPU mode with:
 
 ```powershell
 .\scripts\install_windows.ps1 -Mode Local
@@ -71,36 +89,23 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 - `uv` for creating the worker Python runtime.
 - Enough disk space for downloaded EXR outputs.
 
-## macOS / Manual Install
+## Manual Install
 
-1. Copy the config template:
+The one-click installers are the recommended path. For manual installs, copy the config template:
 
-   ```bash
-   mkdir -p ~/.ltx-hdr-resolve
-   cp config/config.example.json ~/.ltx-hdr-resolve/config.json
-   ```
+```bash
+mkdir -p ~/.ltx-hdr-resolve
+cp config/config.example.json ~/.ltx-hdr-resolve/config.json
+```
 
-2. Edit `~/.ltx-hdr-resolve/config.json` and point it at your LTX repo, venv Python, model files, and output folder.
+Then edit `~/.ltx-hdr-resolve/config.json` and install the Resolve script:
 
-3. Run the diagnostic:
+```bash
+./scripts/install_resolve_script.sh
+python3 src/ltx_hdr_worker.py diagnose --config ~/.ltx-hdr-resolve/config.json
+```
 
-   ```bash
-   python3 src/ltx_hdr_worker.py diagnose --config ~/.ltx-hdr-resolve/config.json
-   ```
-
-   See [docs/local-ltx-setup.md](docs/local-ltx-setup.md) for the full local workstation setup.
-
-4. Install the Resolve script:
-
-   ```bash
-   ./scripts/install_resolve_script.sh
-   ```
-
-5. Restart Resolve. The menu item appears under:
-
-   ```text
-   Workspace -> Scripts -> Utility -> LTX HDR Convert Current Clip
-   ```
+See [docs/local-ltx-setup.md](docs/local-ltx-setup.md) for the full local workstation setup.
 
 ## Use
 
@@ -119,7 +124,7 @@ LTX HDR is not a lightweight color transform. Cloud mode avoids requiring a loca
 - Adds the EXR media as a take on the current clip when Resolve accepts it.
 - Adds media-pool comments and best-effort clip color tags for the LTX HDR EXR input transform.
 - Prints worker progress in the Resolve console and writes job manifests/logs under the configured output directory.
-- Uses LTX cloud mode by default on Windows.
+- Uses LTX cloud mode by default on Windows and macOS.
 - Local GPU mode remains available with `.\scripts\install_windows.ps1 -Mode Local`.
 - Does not change project color-management settings automatically yet.
 
