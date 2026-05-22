@@ -75,6 +75,16 @@ def run_mode(config):
     return str(config.get("mode") or "local").lower().strip()
 
 
+def cloud_upload_limit_mb(config):
+    try:
+        limit_mb = int(config.get("cloud_upload_limit_mb") or DEFAULT_CLOUD_UPLOAD_LIMIT_MB)
+    except Exception:
+        limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    if limit_mb < 1:
+        return DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    return limit_mb
+
+
 def resolve_script_path(config):
     script = Path(config["ltx_hdr_script"])
     if script.is_absolute():
@@ -603,7 +613,7 @@ def convert_cloud(args, config, input_path, job_paths):
     job_dir, output_dir, log_path, manifest_path = job_paths
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     api_key = load_ltx_api_key(config)
-    upload_limit_mb = int(config.get("cloud_upload_limit_mb") or DEFAULT_CLOUD_UPLOAD_LIMIT_MB)
+    upload_limit_mb = cloud_upload_limit_mb(config)
     input_size_mb = input_path.stat().st_size / (1024 * 1024)
     if input_size_mb > upload_limit_mb:
         raise RuntimeError(

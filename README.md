@@ -74,7 +74,7 @@ Advanced users can run `.\scripts\install_windows.ps1 -CustomPaths` to choose di
 
 This v1 is intentionally organized as a Resolve menu script plus an external local worker:
 
-- Resolve script: runs inside DaVinci Resolve, exports the current timeline clip range, auto-segments it if needed for LTX cloud limits, calls the worker, imports the generated EXR sequence, and adds it as a take when the result is a single segment.
+- Resolve script: runs inside DaVinci Resolve, exports the current timeline clip range, auto-segments it if needed for LTX cloud limits, retries with shorter segments when a rendered export is still too large to upload, calls the worker, imports the generated EXR sequence, and adds it as a take when the result is a single segment.
 - Worker: runs outside Resolve, uploads the current clip to the LTX cloud HDR endpoint, downloads the EXR ZIP, and writes a manifest.
 - Config: lives in `~/.ltx-hdr-resolve/config.json`. The LTX API key lives separately in `~/.ltx-hdr-resolve/secrets.json`.
 
@@ -118,7 +118,7 @@ See [docs/local-ltx-setup.md](docs/local-ltx-setup.md) for the full local workst
 ## Current v1 behavior
 
 - Processes a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead. It only uses a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected.
-- Auto-segments timeline clips that exceed LTX cloud frame limits. Single-segment results are added as a take; multi-segment results are imported as separate EXR sequences in the `LTX HDR` bin.
+- Auto-segments timeline clips that exceed LTX cloud frame limits, and adaptively re-segments rendered exports that still exceed `cloud_upload_limit_mb`. Single-segment results are added as a take; multi-segment results are imported as separate EXR sequences in the `LTX HDR` bin.
 - Labels segmented EXR outputs with the same source clip name, `part N of M`, and a continuous output frame range so the pieces are easy to reassemble.
 - Imports the generated EXR sequence as one media-pool item.
 - Adds the EXR media as a take on the current clip when Resolve accepts it.

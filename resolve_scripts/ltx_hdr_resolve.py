@@ -27,7 +27,9 @@ STATUS_MARKER = "LTX_HDR_STATUS="
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
-DEFAULT_LTX_4K_MAX_FRAMES = 41
+DEFAULT_LTX_4K_MAX_FRAMES = 37
+DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 100
+CLOUD_SEGMENT_SIZE_SAFETY_RATIO = 0.92
 LTX_HDR_INPUT_TRANSFORM = "sRGB (Linear) - CSC"
 LTX_HDR_COLOR_NOTE = "LTX HDR EXR color: scene-linear sRGB/Rec.709 primaries; ACES IDT " + LTX_HDR_INPUT_TRANSFORM + "."
 
@@ -270,6 +272,25 @@ def _timeline_item_range(timeline_item):
     return start, start + duration - 1, duration
 
 
+def _is_cloud_mode(config):
+    mode = str(config.get("mode") or "local").lower().strip()
+    return mode in ("ltx_cloud", "cloud")
+
+
+def _cloud_upload_limit_bytes(config):
+    try:
+        limit_mb = int(config.get("cloud_upload_limit_mb") or DEFAULT_CLOUD_UPLOAD_LIMIT_MB)
+    except Exception:
+        limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    if limit_mb < 1:
+        limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    return limit_mb * 1024 * 1024
+
+
+def _format_bytes_mb(byte_count):
+    return "%.1f MB" % (float(byte_count) / float(1024 * 1024))
+
+
 def _set_render_format_for_upload(project):
     candidates = (
         ("mp4", "H264"),
@@ -417,8 +438,10 @@ def _cloud_segment_frame_limit(config, timeline):
     return DEFAULT_LTX_1080P_MAX_FRAMES
 
 
-def _timeline_item_segments(timeline_item, max_frames):
-    start, mark_out, duration = _timeline_item_range(timeline_item)
+def _segments_for_range(start, mark_out, max_frames):
+    duration = mark_out - start + 1
+    if duration < 1:
+        return []
     if max_frames < 1:
         max_frames = duration
     segments = []
@@ -437,6 +460,40 @@ def _timeline_item_segments(timeline_item, max_frames):
         index += 1
         segment_start = segment_out + 1
     return segments
+
+
+def _timeline_item_segments(timeline_item, max_frames):
+    start, mark_out, _duration = _timeline_item_range(timeline_item)
+    return _segments_for_range(start, mark_out, max_frames)
+
+
+def _split_segment_for_upload(segment, rendered_path, upload_limit_bytes):
+    if upload_limit_bytes < 1:
+        return []
+    try:
+        rendered_size = os.path.getsize(rendered_path)
+    except Exception:
+        return []
+    if rendered_size <= upload_limit_bytes:
+        return []
+
+    duration = int(segment["duration"])
+    if duration <= 1:
+        raise RuntimeError(
+            "Rendered one-frame segment is "
+            + _format_bytes_mb(rendered_size)
+            + ", above the configured LTX upload limit of "
+            + _format_bytes_mb(upload_limit_bytes)
+            + ". Raise cloud_upload_limit_mb if your LTX plan supports it."
+        )
+
+    target_bytes = int(upload_limit_bytes * CLOUD_SEGMENT_SIZE_SAFETY_RATIO)
+    max_frames = int((float(duration) * float(target_bytes)) / float(rendered_size))
+    if max_frames < 1:
+        max_frames = 1
+    if max_frames >= duration:
+        max_frames = duration - 1
+    return _segments_for_range(int(segment["start"]), int(segment["mark_out"]), max_frames)
 
 
 def _render_timeline_item_segment(project, timeline_item, config, segment=None, segment_count=1):
@@ -538,6 +595,59 @@ def _render_timeline_item_segment(project, timeline_item, config, segment=None, 
     if not rendered_path or not os.path.exists(rendered_path):
         raise RuntimeError("Timeline clip export finished but no rendered file was found in " + target_dir)
     return rendered_path, duration
+
+
+def _export_timeline_item_segments_for_ltx(project, timeline, timeline_item, config):
+    segment_limit = _cloud_segment_frame_limit(config, timeline)
+    pending = _timeline_item_segments(timeline_item, segment_limit)
+    total_frames = sum(segment["duration"] for segment in pending)
+    if len(pending) > 1:
+        _log("Timeline clip is " + str(total_frames) + " frames; auto-segmenting into " + str(len(pending)) + " chunks of up to " + str(segment_limit) + " frames.")
+
+    upload_limit_bytes = 0
+    if _is_cloud_mode(config):
+        upload_limit_bytes = _cloud_upload_limit_bytes(config)
+
+    rendered_segments = []
+    while pending:
+        segment = pending.pop(0)
+        render_segment_count = max(len(rendered_segments) + len(pending) + 1, 1)
+        clip_path, timeline_frame_count = _render_timeline_item_segment(project, timeline_item, config, segment, render_segment_count)
+        split_segments = _split_segment_for_upload(segment, clip_path, upload_limit_bytes)
+        if split_segments:
+            try:
+                rendered_size = os.path.getsize(clip_path)
+            except Exception:
+                rendered_size = 0
+            _log(
+                "Rendered segment "
+                + str(segment["start"])
+                + "-"
+                + str(segment["mark_out"])
+                + " is "
+                + _format_bytes_mb(rendered_size)
+                + ", above the LTX upload limit of "
+                + _format_bytes_mb(upload_limit_bytes)
+                + "; re-segmenting into "
+                + str(len(split_segments))
+                + " shorter chunk(s)."
+            )
+            try:
+                os.remove(clip_path)
+            except Exception:
+                pass
+            pending = split_segments + pending
+            continue
+
+        rendered_segments.append(
+            {
+                "path": clip_path,
+                "frames": timeline_frame_count,
+                "timeline_start": segment["start"],
+                "timeline_mark_out": segment["mark_out"],
+            }
+        )
+    return rendered_segments
 
 
 def _selected_media_pool_clip_path(project):
@@ -859,26 +969,23 @@ def main():
     if current_item:
         try:
             base_clip_name = current_item.GetName() or "timeline_clip"
-            segment_limit = _cloud_segment_frame_limit(config, timeline)
-            segments = _timeline_item_segments(current_item, segment_limit)
-            total_frames = sum(segment["duration"] for segment in segments)
-            if len(segments) > 1:
-                _log("Timeline clip is " + str(total_frames) + " frames; auto-segmenting into " + str(len(segments)) + " chunks of up to " + str(segment_limit) + " frames.")
+            exported_segments = _export_timeline_item_segments_for_ltx(project, timeline, current_item, config)
             next_output_frame = 1
-            for segment in segments:
-                clip_path, timeline_frame_count = _render_timeline_item_segment(project, current_item, config, segment, len(segments))
-                clip_name = _segment_label(base_clip_name, segment["index"], len(segments), next_output_frame, timeline_frame_count)
+            segment_count = len(exported_segments)
+            for index, segment in enumerate(exported_segments, 1):
+                timeline_frame_count = segment["frames"]
+                clip_name = _segment_label(base_clip_name, index, segment_count, next_output_frame, timeline_frame_count)
                 conversion_inputs.append(
                     {
-                        "path": clip_path,
+                        "path": segment["path"],
                         "name": clip_name,
                         "base_name": base_clip_name,
                         "frames": timeline_frame_count,
-                        "index": segment["index"],
-                        "segment_count": len(segments),
+                        "index": index,
+                        "segment_count": segment_count,
                         "output_frame_start": next_output_frame,
-                        "timeline_start": segment["start"],
-                        "timeline_mark_out": segment["mark_out"],
+                        "timeline_start": segment["timeline_start"],
+                        "timeline_mark_out": segment["timeline_mark_out"],
                     }
                 )
                 next_output_frame += timeline_frame_count

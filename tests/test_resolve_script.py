@@ -42,6 +42,25 @@ class ResolveScriptTests(unittest.TestCase):
         self.assertLessEqual(len(name), 80)
         self.assertIn("_ltxhdr_p012of014_f1000_1040", name)
 
+    def test_oversize_rendered_segment_splits_with_safety_margin(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rendered = Path(temp_dir) / "segment.mp4"
+            rendered.write_bytes(b"x" * 102)
+            segment = {"index": 1, "start": 100, "mark_out": 140, "duration": 41}
+
+            split = ltx_hdr_resolve._split_segment_for_upload(segment, str(rendered), 100)
+
+        self.assertEqual(2, len(split))
+        self.assertLess(split[0]["duration"], segment["duration"])
+        self.assertEqual(100, split[0]["start"])
+        self.assertEqual(140, split[-1]["mark_out"])
+        self.assertEqual(41, sum(item["duration"] for item in split))
+
+    def test_cloud_upload_limit_bytes_uses_default_for_invalid_config(self):
+        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": "bad"}))
+        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 0}))
+        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": -1}))
+
     def test_tag_ltx_hdr_color_space_uses_aces_linear_srgb_candidates(self):
         class FakeItem:
             def __init__(self):
