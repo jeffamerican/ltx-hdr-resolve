@@ -28,7 +28,7 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
 DEFAULT_LTX_4K_MAX_FRAMES = 37
-DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 100
+DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 32
 CLOUD_SEGMENT_SIZE_SAFETY_RATIO = 0.92
 LTX_HDR_INPUT_TRANSFORM = "sRGB (Linear) - CSC"
 LTX_HDR_COLOR_NOTE = "LTX HDR EXR color: scene-linear sRGB/Rec.709 primaries; ACES IDT " + LTX_HDR_INPUT_TRANSFORM + "."
@@ -284,6 +284,8 @@ def _cloud_upload_limit_bytes(config):
         limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
     if limit_mb < 1:
         limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    if limit_mb > DEFAULT_CLOUD_UPLOAD_LIMIT_MB:
+        limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
     return limit_mb * 1024 * 1024
 
 
@@ -482,9 +484,9 @@ def _split_segment_for_upload(segment, rendered_path, upload_limit_bytes):
         raise RuntimeError(
             "Rendered one-frame segment is "
             + _format_bytes_mb(rendered_size)
-            + ", above the configured LTX upload limit of "
+            + ", above the effective LTX upload limit of "
             + _format_bytes_mb(upload_limit_bytes)
-            + ". Raise cloud_upload_limit_mb if your LTX plan supports it."
+            + ". Trim the timeline clip or use a lower-bitrate Resolve export preset."
         )
 
     target_bytes = int(upload_limit_bytes * CLOUD_SEGMENT_SIZE_SAFETY_RATIO)

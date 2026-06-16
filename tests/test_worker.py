@@ -72,9 +72,13 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual("ltx_test_key", ltx_hdr_worker.load_ltx_api_key(config))
 
     def test_cloud_upload_limit_mb_uses_default_for_invalid_config(self):
-        self.assertEqual(100, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": "bad"}))
-        self.assertEqual(100, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": 0}))
-        self.assertEqual(100, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": -1}))
+        self.assertEqual(32, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": "bad"}))
+        self.assertEqual(32, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": 0}))
+        self.assertEqual(32, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": -1}))
+
+    def test_cloud_upload_limit_mb_caps_legacy_high_config(self):
+        self.assertEqual(32, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": 100}))
+        self.assertEqual(16, ltx_hdr_worker.cloud_upload_limit_mb({"cloud_upload_limit_mb": 16}))
 
     def test_load_config_accepts_windows_utf8_bom(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -28,7 +28,7 @@ PROGRESS_INTERVAL_SECONDS = 10
 LTX_API_BASE_URL = "https://api.ltx.video"
 DEFAULT_CLOUD_POLL_SECONDS = 5
 DEFAULT_CLOUD_TIMEOUT_SECONDS = 1800
-DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 100
+DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 32
 WINDOWS_EXIT_CODES = {
     0xC0000005: "Windows native access violation (0xC0000005)",
     0xC000001D: "Windows illegal instruction crash (0xC000001D)",
@@ -81,6 +81,8 @@ def cloud_upload_limit_mb(config):
     except Exception:
         limit_mb = DEFAULT_CLOUD_UPLOAD_LIMIT_MB
     if limit_mb < 1:
+        return DEFAULT_CLOUD_UPLOAD_LIMIT_MB
+    if limit_mb > DEFAULT_CLOUD_UPLOAD_LIMIT_MB:
         return DEFAULT_CLOUD_UPLOAD_LIMIT_MB
     return limit_mb
 
@@ -617,8 +619,8 @@ def convert_cloud(args, config, input_path, job_paths):
     input_size_mb = input_path.stat().st_size / (1024 * 1024)
     if input_size_mb > upload_limit_mb:
         raise RuntimeError(
-            "Input file is %.1f MB, above the configured LTX upload limit of %d MB. "
-            "Use a shorter exported clip/segment or raise cloud_upload_limit_mb if your LTX plan supports it."
+            "Input file is %.1f MB, above the effective LTX upload limit of %d MB. "
+            "Use a shorter exported clip/segment or a lower-bitrate Resolve export preset."
             % (input_size_mb, upload_limit_mb)
         )
 

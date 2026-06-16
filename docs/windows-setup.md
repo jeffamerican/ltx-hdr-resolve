@@ -33,7 +33,7 @@ The default config uses:
 
 ```text
 mode = ltx_cloud
-cloud_upload_limit_mb = 100
+cloud_upload_limit_mb = 32
 cloud_segment_frames = 0
 cloud_poll_seconds = 5
 cloud_timeout_seconds = 1800
@@ -41,7 +41,7 @@ cloud_timeout_seconds = 1800
 
 The current v1 exports a single selected timeline clip when Resolve exposes timeline selection, otherwise the timeline clip under the playhead, and sends rendered segment(s) to LTX. It only sends a Media Pool source clip when no timeline clip is active and exactly one Media Pool clip is selected.
 
-When `cloud_segment_frames` is `0`, the plugin chooses the segment size from the timeline resolution: 181 frames up to 1080p, 101 frames up to 1440p, and 37 frames for 4K. You can override this with an explicit positive frame count. If a rendered timeline segment is larger than the configured upload limit, the Resolve script retries that segment as shorter chunks before uploading. If even a one-frame segment is larger than the limit, trim the timeline clip or raise `cloud_upload_limit_mb` only if your LTX plan supports larger uploads.
+When `cloud_segment_frames` is `0`, the plugin chooses the segment size from the timeline resolution: 181 frames up to 1080p, 101 frames up to 1440p, and 37 frames for 4K. You can override this with an explicit positive frame count. If a rendered timeline segment is larger than the effective upload limit, the Resolve script retries that segment as shorter chunks before uploading. The current LTX cloud endpoint rejects files above 33,554,432 bytes, so legacy configs above 32 MiB are capped automatically. If even a one-frame segment is larger than the limit, trim the timeline clip or use a lower-bitrate Resolve export preset.
 
 Segmented results are labeled with the same source clip name plus `part N of M`, and their EXR filenames use one continuous frame range across the original timeline clip.
 

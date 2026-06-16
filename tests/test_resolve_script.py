@@ -57,9 +57,13 @@ class ResolveScriptTests(unittest.TestCase):
         self.assertEqual(41, sum(item["duration"] for item in split))
 
     def test_cloud_upload_limit_bytes_uses_default_for_invalid_config(self):
-        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": "bad"}))
-        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 0}))
-        self.assertEqual(100 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": -1}))
+        self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": "bad"}))
+        self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 0}))
+        self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": -1}))
+
+    def test_cloud_upload_limit_bytes_caps_legacy_high_config(self):
+        self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 100}))
+        self.assertEqual(16 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 16}))
 
     def test_tag_ltx_hdr_color_space_uses_aces_linear_srgb_candidates(self):
         class FakeItem:
