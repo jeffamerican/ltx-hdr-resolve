@@ -12,6 +12,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,8 +29,10 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
 DEFAULT_LTX_4K_MAX_FRAMES = 37
+DEFAULT_LTX_UNKNOWN_MAX_FRAMES = DEFAULT_LTX_1440P_MAX_FRAMES
 DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 32
 CLOUD_SEGMENT_SIZE_SAFETY_RATIO = 0.92
+RESOLUTION_PATTERN = re.compile(r"(\d{3,5})\s*[xX]\s*(\d{3,5})")
 LTX_HDR_INPUT_TRANSFORM = "sRGB (Linear) - CSC"
 LTX_HDR_COLOR_NOTE = "LTX HDR EXR color: scene-linear sRGB/Rec.709 primaries; ACES IDT " + LTX_HDR_INPUT_TRANSFORM + "."
 
@@ -406,38 +409,106 @@ def _find_rendered_segment(target_dir, custom_name):
     return candidates[0][1]
 
 
-def _timeline_resolution(timeline):
-    width = 0
-    height = 0
-    for key in ("timelineResolutionWidth", "timelineResolutionHeight"):
-        try:
-            value = int(timeline.GetSetting(key) or 0)
-        except Exception:
-            value = 0
-        if key.endswith("Width"):
-            width = value
-        else:
-            height = value
-    return width, height
+def _int_or_zero(value):
+    try:
+        return int(value or 0)
+    except Exception:
+        return 0
 
 
-def _cloud_segment_frame_limit(config, timeline):
-    configured = config.get("cloud_segment_frames")
-    if configured is not None:
+def _parse_resolution_text(value):
+    if value is None:
+        return 0, 0
+    match = RESOLUTION_PATTERN.search(str(value))
+    if not match:
+        return 0, 0
+    return int(match.group(1)), int(match.group(2))
+
+
+def _resolution_from_mapping(settings):
+    if not isinstance(settings, dict):
+        return 0, 0
+    width = _int_or_zero(settings.get("timelineResolutionWidth") or settings.get("resolutionWidth") or settings.get("Width"))
+    height = _int_or_zero(settings.get("timelineResolutionHeight") or settings.get("resolutionHeight") or settings.get("Height"))
+    if width > 0 and height > 0:
+        return width, height
+    for value in settings.values():
+        width, height = _parse_resolution_text(value)
+        if width > 0 and height > 0:
+            return width, height
+    return 0, 0
+
+
+def _resolution_from_settings_provider(provider):
+    if not provider:
+        return 0, 0
+    try:
+        width = _int_or_zero(provider.GetSetting("timelineResolutionWidth"))
+        height = _int_or_zero(provider.GetSetting("timelineResolutionHeight"))
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    try:
+        return _resolution_from_mapping(provider.GetSetting())
+    except Exception:
+        return 0, 0
+
+
+def _resolution_from_timeline_item(timeline_item):
+    if not timeline_item:
+        return 0, 0
+    media_pool_item = None
+    try:
+        media_pool_item = timeline_item.GetMediaPoolItem()
+    except Exception:
+        media_pool_item = None
+    if not media_pool_item:
+        return 0, 0
+    for key in ("Resolution", "Video Resolution", "Image Resolution"):
         try:
-            configured_int = int(configured)
-            if configured_int > 0:
-                return configured_int
+            width, height = _parse_resolution_text(media_pool_item.GetClipProperty(key))
+            if width > 0 and height > 0:
+                return width, height
         except Exception:
             pass
+    try:
+        return _resolution_from_mapping(media_pool_item.GetClipProperty())
+    except Exception:
+        return 0, 0
 
-    width, height = _timeline_resolution(timeline)
+
+def _timeline_resolution(timeline, project=None, timeline_item=None):
+    for provider in (timeline, project):
+        width, height = _resolution_from_settings_provider(provider)
+        if width > 0 and height > 0:
+            return width, height
+    return _resolution_from_timeline_item(timeline_item)
+
+
+def _frame_limit_for_resolution(width, height):
+    if width < 1 or height < 1:
+        return DEFAULT_LTX_UNKNOWN_MAX_FRAMES
     largest = max(width, height)
     if largest >= 3840 or height >= 2160:
         return DEFAULT_LTX_4K_MAX_FRAMES
     if largest >= 2560 or height >= 1440:
         return DEFAULT_LTX_1440P_MAX_FRAMES
     return DEFAULT_LTX_1080P_MAX_FRAMES
+
+
+def _cloud_segment_frame_limit(config, timeline, project=None, timeline_item=None):
+    width, height = _timeline_resolution(timeline, project, timeline_item)
+    resolution_limit = _frame_limit_for_resolution(width, height)
+    configured = config.get("cloud_segment_frames")
+    if configured is not None:
+        try:
+            configured_int = int(configured)
+            if configured_int > 0:
+                return min(configured_int, resolution_limit)
+        except Exception:
+            pass
+    return resolution_limit
 
 
 def _segments_for_range(start, mark_out, max_frames):
@@ -469,7 +540,7 @@ def _timeline_item_segments(timeline_item, max_frames):
     return _segments_for_range(start, mark_out, max_frames)
 
 
-def _split_segment_for_upload(segment, rendered_path, upload_limit_bytes):
+def _split_segment_for_upload(segment, rendered_path, upload_limit_bytes, max_frame_limit=0):
     if upload_limit_bytes < 1:
         return []
     try:
@@ -493,6 +564,8 @@ def _split_segment_for_upload(segment, rendered_path, upload_limit_bytes):
     max_frames = int((float(duration) * float(target_bytes)) / float(rendered_size))
     if max_frames < 1:
         max_frames = 1
+    if max_frame_limit > 0 and max_frames > max_frame_limit:
+        max_frames = max_frame_limit
     if max_frames >= duration:
         max_frames = duration - 1
     return _segments_for_range(int(segment["start"]), int(segment["mark_out"]), max_frames)
@@ -600,7 +673,7 @@ def _render_timeline_item_segment(project, timeline_item, config, segment=None, 
 
 
 def _export_timeline_item_segments_for_ltx(project, timeline, timeline_item, config):
-    segment_limit = _cloud_segment_frame_limit(config, timeline)
+    segment_limit = _cloud_segment_frame_limit(config, timeline, project, timeline_item)
     pending = _timeline_item_segments(timeline_item, segment_limit)
     total_frames = sum(segment["duration"] for segment in pending)
     if len(pending) > 1:
@@ -615,7 +688,7 @@ def _export_timeline_item_segments_for_ltx(project, timeline, timeline_item, con
         segment = pending.pop(0)
         render_segment_count = max(len(rendered_segments) + len(pending) + 1, 1)
         clip_path, timeline_frame_count = _render_timeline_item_segment(project, timeline_item, config, segment, render_segment_count)
-        split_segments = _split_segment_for_upload(segment, clip_path, upload_limit_bytes)
+        split_segments = _split_segment_for_upload(segment, clip_path, upload_limit_bytes, segment_limit)
         if split_segments:
             try:
                 rendered_size = os.path.getsize(clip_path)

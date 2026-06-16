@@ -56,6 +56,19 @@ class ResolveScriptTests(unittest.TestCase):
         self.assertEqual(140, split[-1]["mark_out"])
         self.assertEqual(41, sum(item["duration"] for item in split))
 
+    def test_oversize_rendered_segment_respects_frame_tier_cap(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rendered = Path(temp_dir) / "segment.mp4"
+            rendered.write_bytes(b"x" * 35493574)
+            segment = {"index": 1, "start": 86400, "mark_out": 86580, "duration": 181}
+
+            split = ltx_hdr_resolve._split_segment_for_upload(segment, str(rendered), 32 * 1024 * 1024, 101)
+
+        self.assertEqual(2, len(split))
+        self.assertEqual(101, split[0]["duration"])
+        self.assertEqual(80, split[1]["duration"])
+        self.assertEqual(86580, split[-1]["mark_out"])
+
     def test_cloud_upload_limit_bytes_uses_default_for_invalid_config(self):
         self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": "bad"}))
         self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 0}))
@@ -64,6 +77,52 @@ class ResolveScriptTests(unittest.TestCase):
     def test_cloud_upload_limit_bytes_caps_legacy_high_config(self):
         self.assertEqual(32 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 100}))
         self.assertEqual(16 * 1024 * 1024, ltx_hdr_resolve._cloud_upload_limit_bytes({"cloud_upload_limit_mb": 16}))
+
+    def test_cloud_segment_frame_limit_uses_project_resolution(self):
+        class FakeProject:
+            def GetSetting(self, key=None):
+                values = {
+                    "timelineResolutionWidth": "2560",
+                    "timelineResolutionHeight": "1440",
+                }
+                if key is None:
+                    return values
+                return values.get(key)
+
+        self.assertEqual(101, ltx_hdr_resolve._cloud_segment_frame_limit({}, None, FakeProject(), None))
+
+    def test_cloud_segment_frame_limit_caps_configured_override_to_resolution_tier(self):
+        class FakeTimeline:
+            def GetSetting(self, key=None):
+                values = {
+                    "timelineResolutionWidth": "2560",
+                    "timelineResolutionHeight": "1440",
+                }
+                if key is None:
+                    return values
+                return values.get(key)
+
+        self.assertEqual(
+            101,
+            ltx_hdr_resolve._cloud_segment_frame_limit({"cloud_segment_frames": 181}, FakeTimeline()),
+        )
+
+    def test_cloud_segment_frame_limit_falls_back_to_1440p_tier_when_resolution_unknown(self):
+        self.assertEqual(101, ltx_hdr_resolve._cloud_segment_frame_limit({}, None))
+
+    def test_cloud_segment_frame_limit_uses_media_pool_clip_resolution(self):
+        class FakeMediaPoolItem:
+            def GetClipProperty(self, key=None):
+                values = {"Resolution": "3840x2160"}
+                if key is None:
+                    return values
+                return values.get(key)
+
+        class FakeTimelineItem:
+            def GetMediaPoolItem(self):
+                return FakeMediaPoolItem()
+
+        self.assertEqual(37, ltx_hdr_resolve._cloud_segment_frame_limit({}, None, None, FakeTimelineItem()))
 
     def test_tag_ltx_hdr_color_space_uses_aces_linear_srgb_candidates(self):
         class FakeItem:
