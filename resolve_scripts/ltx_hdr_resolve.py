@@ -26,6 +26,7 @@ LOG_MARKER = "LTX_HDR_LOG="
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 STATUS_MARKER = "LTX_HDR_STATUS="
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
+RESOLVE_SCRIPT_VERSION = "2026-06-16-frame-tier-cap"
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
 DEFAULT_LTX_4K_MAX_FRAMES = 37
@@ -104,6 +105,8 @@ def debug_environment():
     lines = []
     lines.append("Python executable: " + sys.executable)
     lines.append("Python version: " + sys.version.replace("\n", " "))
+    lines.append("Resolve script version: " + RESOLVE_SCRIPT_VERSION)
+    lines.append("Resolve script path: " + __file__)
     lines.append("PLUGIN_ROOT: " + (PLUGIN_ROOT or "<unset>"))
     config_path = os.environ.get("LTX_HDR_CONFIG", DEFAULT_CONFIG_PATH)
     lines.append("Config path: " + config_path)
@@ -1030,6 +1033,9 @@ def main():
     except Exception as exc:
         _alert("Could not read config: " + config_path + "\n" + str(exc))
         return
+
+    _log("Resolve script version: " + RESOLVE_SCRIPT_VERSION)
+    _log("Resolve script path: " + __file__)
 
     worker_python = config.get("ltx_python") or ""
     if not worker_python:
