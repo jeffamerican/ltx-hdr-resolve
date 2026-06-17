@@ -31,6 +31,28 @@ class ResolveScriptTests(unittest.TestCase):
             self.assertEqual(182, start_index)
             self.assertEqual(184, end_index)
 
+    def test_copy_exrs_to_combined_sequence_numbers_frames_continuously(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            exr_dir = root / "segment"
+            combined_dir = root / "combined"
+            exr_dir.mkdir()
+            combined_dir.mkdir()
+            for frame in range(2):
+                (exr_dir / ("raw_%04d.exr" % frame)).write_text("frame")
+
+            count = ltx_hdr_resolve._copy_exrs_to_combined_sequence(str(exr_dir), str(combined_dir), "Scene 12/A", 102)
+
+            self.assertEqual(2, count)
+            names = sorted(path.name for path in combined_dir.glob("*.exr"))
+            self.assertEqual(2, len(names))
+            self.assertTrue(names[0].endswith("_ltx_hdr_frame_000102.exr"))
+            self.assertTrue(names[1].endswith("_ltx_hdr_frame_000103.exr"))
+            sequence_path, start_index, end_index = ltx_hdr_resolve._find_exr_sequence(str(combined_dir))
+            self.assertTrue(sequence_path.endswith("_ltx_hdr_frame_%06d.exr"))
+            self.assertEqual(102, start_index)
+            self.assertEqual(103, end_index)
+
     def test_segment_label_identifies_shared_clip_part_and_frame_range(self):
         label = ltx_hdr_resolve._segment_label("Hero Shot", 3, 4, 365, 41)
 

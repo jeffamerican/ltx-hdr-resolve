@@ -26,7 +26,7 @@ LOG_MARKER = "LTX_HDR_LOG="
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 STATUS_MARKER = "LTX_HDR_STATUS="
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
-RESOLVE_SCRIPT_VERSION = "2026-06-16-safe-101-frame-cap"
+RESOLVE_SCRIPT_VERSION = "2026-06-16-combined-segment-import"
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
 DEFAULT_LTX_4K_MAX_FRAMES = 37
@@ -840,6 +840,32 @@ def _normalize_exr_sequence_names(exr_dir, base_name, segment_index, segment_cou
     return len(final_paths)
 
 
+def _combined_exr_output_dir(config, base_name):
+    output_root = config.get("output_root") or os.path.join(os.path.expanduser("~"), ".ltx-hdr-resolve", "output")
+    root = os.path.join(output_root, "combined_exr")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    base = stamp + "_" + _short_safe_name(base_name, 32)
+    candidate = os.path.join(root, base)
+    suffix = 1
+    while os.path.exists(candidate):
+        suffix += 1
+        candidate = os.path.join(root, base + "_" + str(suffix))
+    os.makedirs(candidate)
+    return candidate
+
+
+def _copy_exrs_to_combined_sequence(exr_dir, combined_dir, base_name, first_frame):
+    frames = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
+    if not frames:
+        raise RuntimeError("No EXR frames found in " + exr_dir)
+    prefix = _short_safe_name(base_name, 36) + "_ltx_hdr"
+    for index, frame_path in enumerate(frames):
+        frame_number = first_frame + index
+        final_path = os.path.join(combined_dir, prefix + "_frame_" + str(frame_number).zfill(6) + ".exr")
+        shutil.copy2(frame_path, final_path)
+    return len(frames)
+
+
 def _set_imported_item_label(item, label):
     attempts = (
         lambda: item.SetClipProperty("Clip Name", label),
@@ -1099,51 +1125,99 @@ def main():
         )
 
     imported_items = []
-    for item in conversion_inputs:
-        clip_path = item["path"]
-        clip_name = item["name"]
-        if not clip_path or not os.path.exists(clip_path):
-            _alert("Could not resolve an input clip path for LTX HDR.")
-            return
-        try:
-            manifest = _run_worker_conversion(worker_python, worker, config_path, clip_path, clip_name)
-        except Exception as exc:
-            _alert(str(exc))
-            return
+    if current_item and len(conversion_inputs) > 1:
+        combined_dir = _combined_exr_output_dir(config, base_clip_name or "timeline_clip")
+        next_combined_frame = 1
+        for item in conversion_inputs:
+            clip_path = item["path"]
+            clip_name = item["name"]
+            if not clip_path or not os.path.exists(clip_path):
+                _alert("Could not resolve an input clip path for LTX HDR.")
+                return
+            try:
+                manifest = _run_worker_conversion(worker_python, worker, config_path, clip_path, clip_name)
+            except Exception as exc:
+                _alert(str(exc))
+                return
 
-        exr_dir = manifest.get("exr_dir")
-        if not exr_dir or not os.path.isdir(exr_dir):
-            _alert("Conversion completed but no EXR directory was reported.")
-            return
-        actual_frame_count = _normalize_exr_sequence_names(
-            exr_dir,
-            item.get("base_name") or clip_name,
-            int(item.get("index") or 1),
-            int(item.get("segment_count") or 1),
-            int(item.get("output_frame_start") or 1),
-        )
-        segment_count = int(item.get("segment_count") or 1)
-        segment_index = int(item.get("index") or 1)
-        imported_label = _segment_label(
-            item.get("base_name") or clip_name,
-            segment_index,
-            segment_count,
-            int(item.get("output_frame_start") or 1),
-            actual_frame_count,
-        )
+            exr_dir = manifest.get("exr_dir")
+            if not exr_dir or not os.path.isdir(exr_dir):
+                _alert("Conversion completed but no EXR directory was reported.")
+                return
+            copied_frame_count = _copy_exrs_to_combined_sequence(
+                exr_dir,
+                combined_dir,
+                item.get("base_name") or clip_name,
+                next_combined_frame,
+            )
+            _log(
+                "Added segment "
+                + str(item.get("index"))
+                + "/"
+                + str(item.get("segment_count"))
+                + " to combined EXR sequence frames "
+                + str(next_combined_frame).zfill(6)
+                + "-"
+                + str(next_combined_frame + copied_frame_count - 1).zfill(6)
+                + "."
+            )
+            next_combined_frame += copied_frame_count
+
+        combined_frame_count = next_combined_frame - 1
+        imported_label = _segment_label(base_clip_name or "timeline_clip", 1, 1, 1, combined_frame_count)
         metadata = (
-            "Segment "
-            + str(segment_index)
-            + " of "
-            + str(segment_count)
-            + "; output frames "
-            + str(int(item.get("output_frame_start") or 1)).zfill(6)
-            + "-"
-            + str(int(item.get("output_frame_start") or 1) + actual_frame_count - 1).zfill(6)
+            "Combined from "
+            + str(len(conversion_inputs))
+            + " LTX HDR cloud segment jobs; output frames 000001-"
+            + str(combined_frame_count).zfill(6)
         )
-        if item.get("timeline_start") or item.get("timeline_mark_out"):
-            metadata += "; timeline frames " + str(item.get("timeline_start")) + "-" + str(item.get("timeline_mark_out"))
-        imported_items.append(_import_exr_sequence(project, exr_dir, imported_label, metadata))
+        imported_items.append(_import_exr_sequence(project, combined_dir, imported_label, metadata))
+    else:
+        for item in conversion_inputs:
+            clip_path = item["path"]
+            clip_name = item["name"]
+            if not clip_path or not os.path.exists(clip_path):
+                _alert("Could not resolve an input clip path for LTX HDR.")
+                return
+            try:
+                manifest = _run_worker_conversion(worker_python, worker, config_path, clip_path, clip_name)
+            except Exception as exc:
+                _alert(str(exc))
+                return
+
+            exr_dir = manifest.get("exr_dir")
+            if not exr_dir or not os.path.isdir(exr_dir):
+                _alert("Conversion completed but no EXR directory was reported.")
+                return
+            actual_frame_count = _normalize_exr_sequence_names(
+                exr_dir,
+                item.get("base_name") or clip_name,
+                int(item.get("index") or 1),
+                int(item.get("segment_count") or 1),
+                int(item.get("output_frame_start") or 1),
+            )
+            segment_count = int(item.get("segment_count") or 1)
+            segment_index = int(item.get("index") or 1)
+            imported_label = _segment_label(
+                item.get("base_name") or clip_name,
+                segment_index,
+                segment_count,
+                int(item.get("output_frame_start") or 1),
+                actual_frame_count,
+            )
+            metadata = (
+                "Segment "
+                + str(segment_index)
+                + " of "
+                + str(segment_count)
+                + "; output frames "
+                + str(int(item.get("output_frame_start") or 1)).zfill(6)
+                + "-"
+                + str(int(item.get("output_frame_start") or 1) + actual_frame_count - 1).zfill(6)
+            )
+            if item.get("timeline_start") or item.get("timeline_mark_out"):
+                metadata += "; timeline frames " + str(item.get("timeline_start")) + "-" + str(item.get("timeline_mark_out"))
+            imported_items.append(_import_exr_sequence(project, exr_dir, imported_label, metadata))
 
     if current_item and len(imported_items) == 1:
         try:
