@@ -26,11 +26,12 @@ LOG_MARKER = "LTX_HDR_LOG="
 MANIFEST_MARKER = "LTX_HDR_MANIFEST="
 STATUS_MARKER = "LTX_HDR_STATUS="
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mxf")
-RESOLVE_SCRIPT_VERSION = "2026-06-16-frame-tier-cap"
+RESOLVE_SCRIPT_VERSION = "2026-06-16-safe-101-frame-cap"
 DEFAULT_LTX_1080P_MAX_FRAMES = 181
 DEFAULT_LTX_1440P_MAX_FRAMES = 101
 DEFAULT_LTX_4K_MAX_FRAMES = 37
 DEFAULT_LTX_UNKNOWN_MAX_FRAMES = DEFAULT_LTX_1440P_MAX_FRAMES
+DEFAULT_LTX_SAFE_MAX_FRAMES = DEFAULT_LTX_1440P_MAX_FRAMES
 DEFAULT_CLOUD_UPLOAD_LIMIT_MB = 32
 CLOUD_SEGMENT_SIZE_SAFETY_RATIO = 0.92
 RESOLUTION_PATTERN = re.compile(r"(\d{3,5})\s*[xX]\s*(\d{3,5})")
@@ -503,15 +504,16 @@ def _frame_limit_for_resolution(width, height):
 def _cloud_segment_frame_limit(config, timeline, project=None, timeline_item=None):
     width, height = _timeline_resolution(timeline, project, timeline_item)
     resolution_limit = _frame_limit_for_resolution(width, height)
+    safe_resolution_limit = min(resolution_limit, DEFAULT_LTX_SAFE_MAX_FRAMES)
     configured = config.get("cloud_segment_frames")
     if configured is not None:
         try:
             configured_int = int(configured)
             if configured_int > 0:
-                return min(configured_int, resolution_limit)
+                return min(configured_int, safe_resolution_limit)
         except Exception:
             pass
-    return resolution_limit
+    return safe_resolution_limit
 
 
 def _segments_for_range(start, mark_out, max_frames):

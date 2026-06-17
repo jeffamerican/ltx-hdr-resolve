@@ -91,6 +91,19 @@ class ResolveScriptTests(unittest.TestCase):
 
         self.assertEqual(101, ltx_hdr_resolve._cloud_segment_frame_limit({}, None, FakeProject(), None))
 
+    def test_cloud_segment_frame_limit_uses_safe_cap_even_for_1080p_signal(self):
+        class FakeTimeline:
+            def GetSetting(self, key=None):
+                values = {
+                    "timelineResolutionWidth": "1920",
+                    "timelineResolutionHeight": "1080",
+                }
+                if key is None:
+                    return values
+                return values.get(key)
+
+        self.assertEqual(101, ltx_hdr_resolve._cloud_segment_frame_limit({}, FakeTimeline()))
+
     def test_cloud_segment_frame_limit_caps_configured_override_to_resolution_tier(self):
         class FakeTimeline:
             def GetSetting(self, key=None):
